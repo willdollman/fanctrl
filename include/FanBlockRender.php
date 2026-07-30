@@ -24,6 +24,11 @@ function render_fan_block($cfg, $i, $pwms, $disks, $pwm_labels, $cpu_sensors) {
   $idle_abs = isset($cfg['idle']) && is_numeric($cfg['idle']) ? (int)$cfg['idle'] : 0;
   $idle_pct = round($idle_abs * 100 / 255) . '%';
 
+  // Quiet mode fallback
+  $quiet_enabled = ($cfg['quiet'] ?? '0') == '1';
+  $quiet_cap_abs = isset($cfg['quiet_cap']) && is_numeric($cfg['quiet_cap']) ? (int)$cfg['quiet_cap'] : 150;
+  $quiet_cap_pct = round($quiet_cap_abs * 100 / 255) . '%';
+
   ob_start();
   ?>
   <div class="fan-block" data-index="<?=$i?>" data-file="<?=htmlspecialchars($cfg['file'])?>">
@@ -173,9 +178,31 @@ function render_fan_block($cfg, $i, $pwms, $disks, $pwm_labels, $cpu_sensors) {
           </td>
         </tr>
 
+        <!-- Quiet Mode -->
+        <tr>
+          <td class="fcp-help-cursor"
+              title="When enabled, short heat spikes only ramp the fan up to the Quiet Ceiling. The fan is allowed above the ceiling only when high temperature is sustained for several minutes. Critical temperatures always force full speed immediately.">
+            Quiet Mode:
+          </td>
+          <td>
+            <select name="quiet[<?=$i?>]" class="fcp-enable-select">
+              <option value="0" <?=!$quiet_enabled ? 'selected' : ''?>>Disabled</option>
+              <option value="1" <?=$quiet_enabled ? 'selected' : ''?>>Enabled</option>
+            </select>
+            <input type="text"
+                  id="quiet_cap_input_<?=$i?>"
+                  name="quiet_cap_percent[<?=$i?>]"
+                  inputmode="numeric"
+                  class="fcp-input-idle"
+                  value="<?=$quiet_cap_pct?>"
+                  title="Quiet Ceiling: <?=$quiet_cap_pct?> = <?=$quiet_cap_abs?> PWM. Max fan speed for short-lived heat spikes."
+                  placeholder="Ceiling %">
+          </td>
+        </tr>
+
         <!-- Interval -->
         <tr>
-          <td class="fcp-help-cursor" title="Check temperature and adjust fan speed every X minutes.">Interval:</td>
+          <td class="fcp-help-cursor" title="Check disk temperatures every X minutes (SMART polling). CPU temperature and fan speed are updated every 5 seconds regardless.">Interval:</td>
           <td>
             <input type="text"
                   id="interval_input_<?=$i?>"

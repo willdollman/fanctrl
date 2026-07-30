@@ -71,6 +71,16 @@ foreach ($_POST['#file'] as $i => $file) {
   if ($idle_abs > $pwm) $idle_abs = $pwm;
   if ($idle_abs < 0)    $idle_abs = 0;
 
+  // ===== Quiet Mode =====
+  $quiet = ($_POST['quiet'][$i] ?? '0') === '1' ? '1' : '0';
+  $quiet_cap_raw = $_POST['quiet_cap_percent'][$i] ?? '';
+  $quiet_cap_pct = is_numeric($q = preg_replace('/[^0-9]/', '', $quiet_cap_raw)) ? intval($q) : 59;
+  $quiet_cap_pct = max(0, min(100, $quiet_cap_pct));
+  $quiet_cap = (int) round($quiet_cap_pct * 255 / 100);
+  // ceiling must sit between min and max fan speed
+  if ($quiet_cap < $pwm)     $quiet_cap = $pwm;
+  if ($quiet_cap > $max_pwm) $quiet_cap = $max_pwm;
+
   // CPU fallback
   $cpu_enable = $_POST['cpu_enable'][$i] ?? '0';
   $cpu_sensor = $_POST['cpu_sensor'][$i] ?? '';
@@ -186,6 +196,8 @@ foreach ($_POST['#file'] as $i => $file) {
     'pwm'        => $pwm,
     'max'        => $max_pwm,
     'idle'       => (string)$idle_abs,
+    'quiet'      => $quiet,
+    'quiet_cap'  => (string)$quiet_cap,
     'low'        => $low_temp,
     'high'       => $high_temp,
     'interval'   => $_POST['interval'][$i] ?? '',

@@ -60,10 +60,25 @@ red = CPU temp, orange = hottest disk, blue = PWM).
   is capped at `quiet_cap` unless a slow EMA (tau 5min) confirms sustained
   heat, which raises the cap; instantaneous critical temps bypass everything
   (latched). Short spikes -> moderate ramp; sustained load -> full range.
+- `dual_ema_quiet_int` — exact integer mirror of `dual_ema_quiet` (x1000
+  fixed-point EMAs, integer division), matching the shipping bash
+  implementation in `../scripts/fanctrl_algo.sh` tick-for-tick.
 
 All algorithms use only integer-friendly math (EMA, clamped accumulator,
 piecewise-linear interpolation) so the winner can be ported to the plugin's
-bash loop on Unraid.
+bash loop on Unraid. `dual_ema_quiet` won and is what the plugin now ships
+(`scripts/fanctrl_algo.sh`).
+
+## Parity test
+
+```bash
+python3 test_bash_parity.py
+```
+
+Drives `scripts/fanctrl_algo.sh` and `DualEmaQuietInt` through 2400 identical
+ticks (noise, ramps, critical spikes, disk standby, CPU sensor dropout, idle)
+and asserts every PWM output is byte-identical. Run this after any change to
+either implementation.
 
 ## Caveats
 

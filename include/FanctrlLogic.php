@@ -143,6 +143,8 @@ switch ($op) {
     pwm="102"
     max="255"
     idle="0"
+    quiet="0"
+    quiet_cap="150"
     low="40"
     high="60"
     interval="2"

@@ -290,6 +290,138 @@ class DualEmaQuiet:
         return self._pwm
 
 
+def tdiv(a: int, b: int) -> int:
+    """Truncating integer division, matching bash $(( a / b ))."""
+    q = abs(a) // abs(b)
+    return q if (a >= 0) == (b >= 0) else -q
+
+
+@dataclass
+class DualEmaQuietInt:
+    """Exact integer mirror of scripts/fanctrl_algo.sh (the shipping bash
+    implementation). Kept in lockstep by test_bash_parity.py.
+    EMA state is scaled x1000; all divisions truncate like bash."""
+
+    name: str = "dual_ema_quiet_int"
+    cfg: dict = field(default_factory=lambda: dict(DEFAULTS))
+    tick: int = 5
+    disk_period: int = 30
+    quiet: int = 1
+    quiet_cap: int = 150
+    idle_pwm: int = 0
+    up_per_tick: int = 12
+    down_per_tick: int = 3
+    deadband: int = 4
+
+    def __post_init__(self):
+        c = self.cfg
+        self.kf = (45 + self.tick) // self.tick
+        self.ks = (300 + self.tick) // self.tick
+        self.kd = max(1, (90 + self.disk_period) // self.disk_period)
+        self.quiet_cap = max(c["min_pwm"], min(c["max_pwm"], self.quiet_cap))
+        self.cpu_points = [(c["cpu_low"], c["min_pwm"]), (c["cpu_high"], c["max_pwm"])]
+        self.disk_points = [(c["disk_low"], c["min_pwm"]), (c["disk_high"], c["max_pwm"])]
+        self.ema_f = -1
+        self.ema_s = -1
+        self.ema_d = -1
+        self.raw_cpu = -1000
+        self.raw_disk = -1000
+        self.crit = 0
+        self.pwm = -1
+
+    def _curve(self, t1000: int, points) -> int:
+        ft, fv = points[0]
+        lt, lv = points[-1]
+        if t1000 <= ft * 1000:
+            return fv
+        if t1000 >= lt * 1000:
+            return lv
+        prev_t, prev_v = ft, fv
+        for t, v in points[1:]:
+            if t1000 <= t * 1000:
+                return prev_v + tdiv((t1000 - prev_t * 1000) * (v - prev_v), (t - prev_t) * 1000)
+            prev_t, prev_v = t, v
+        return lv
+
+    def _ema(self, ema: int, x: int, k: int) -> int:
+        if ema < 0:
+            return x * 1000
+        return ema + tdiv(x * 1000 - ema, k)
+
+    def algo_step(self, cpu, disk) -> int:
+        """cpu: int degC or None. disk: int degC, None, or 'keep'."""
+        c = self.cfg
+        if cpu is not None:
+            self.raw_cpu = cpu
+            self.ema_f = self._ema(self.ema_f, cpu, self.kf)
+            self.ema_s = self._ema(self.ema_s, cpu, self.ks)
+        else:
+            self.raw_cpu = -1000
+            self.ema_f = -1
+            self.ema_s = -1
+
+        if disk is None:
+            self.raw_disk = -1000
+            self.ema_d = -1
+        elif disk != "keep":
+            self.raw_disk = disk
+            self.ema_d = self._ema(self.ema_d, disk, self.kd)
+
+        fast, sust = -1, -1
+        if self.ema_f >= 0:
+            fast = max(fast, self._curve(self.ema_f, self.cpu_points))
+            sust = max(sust, self._curve(self.ema_s, self.cpu_points))
+        if self.ema_d >= 0:
+            d = self._curve(self.ema_d, self.disk_points)
+            fast = max(fast, d)
+            sust = max(sust, d)
+
+        no_source = fast < 0
+        if no_source:
+            target = self.idle_pwm
+        elif self.quiet == 1:
+            target = min(fast, max(self.quiet_cap, sust))
+        else:
+            target = fast
+
+        if self.pwm < 0:
+            self.pwm = target
+            return self.pwm
+
+        cpu_hot = self.raw_cpu > -1000 and self.raw_cpu >= c["cpu_crit"]
+        disk_hot = self.raw_disk > -1000 and self.raw_disk >= c["disk_crit"]
+        if cpu_hot or disk_hot:
+            self.crit = 1
+        elif self.crit == 1:
+            still = (self.raw_cpu > -1000 and self.raw_cpu >= c["cpu_crit"] - 5) or \
+                    (self.raw_disk > -1000 and self.raw_disk >= c["disk_crit"] - 5)
+            if not still:
+                self.crit = 0
+        if self.crit == 1:
+            self.pwm = c["max_pwm"]
+            return self.pwm
+
+        delta = target - self.pwm
+        if not no_source and abs(delta) <= self.deadband:
+            return self.pwm
+        if delta > 0:
+            delta = min(delta, self.up_per_tick)
+        else:
+            delta = max(delta, -self.down_per_tick)
+        self.pwm += delta
+        return self.pwm
+
+    def step(self, t: int, sensors) -> int:
+        """Sim adapter: 5s control tick, 30s disk poll, like the bash loop."""
+        if self.pwm >= 0 and t % self.tick != 0:
+            return self.pwm
+        disk = "keep"
+        if t % self.disk_period == 0 or self.ema_d < 0:
+            disk = max(sensors.read_disks())
+        cpu = int(sensors.read_cpu())   # bash: millidegrees / 1000, truncated
+        return self.algo_step(cpu, disk)
+
+
 def make_all() -> list:
     c = DEFAULTS
     nl_cpu = [(c["cpu_low"], c["min_pwm"]), (60, 115), (68, 160), (c["cpu_high"], c["max_pwm"])]
@@ -301,4 +433,5 @@ def make_all() -> list:
         SmoothSlew(name="smooth_slew_nl", cpu_points=nl_cpu, disk_points=nl_disk),
         PiController(),
         DualEmaQuiet(),
+        DualEmaQuietInt(),
     ]
