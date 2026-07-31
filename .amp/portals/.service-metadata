@@ -1,0 +1,13 @@
+{
+  "adHocServices": {
+    "fcp-ui": {
+      "name": "fcp-ui",
+      "command": "/home/user/workspace/fanctrlplus/devharness/serve.sh 8080",
+      "portals": [],
+      "health": "/",
+      "review": true,
+      "cwd": "/home/user/workspace/fanctrlplus",
+      "port": 30625
+    }
+  }
+}

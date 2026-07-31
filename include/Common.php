@@ -1,4 +1,11 @@
 <?php
+// Dev-only override: prefix for /sys paths so the UI can be rendered on a
+// development machine with a fake sysfs tree (see devharness/). Empty ('')
+// in production, so all paths are unchanged on Unraid.
+function fcp_sys_root(): string {
+  return getenv('FCP_SYS_ROOT') ?: '';
+}
+
 // =============================
 // Migrate hwmonX cfg 与 label 路径
 // =============================
@@ -12,7 +19,7 @@ function normalize_chip_name(string $chip): string {
 
 function build_pwm_map(): array {
     $map = [];
-    foreach (glob("/sys/class/hwmon/hwmon*") as $dir) {
+    foreach (glob(fcp_sys_root() . "/sys/class/hwmon/hwmon*") as $dir) {
         $name_file = "$dir/name";
         if (!is_file($name_file)) continue;
 
@@ -39,7 +46,7 @@ function extract_chip_and_pwm_from_path(string $old_path): ?array {
     if (preg_match('#/platform/([^/]+)/#', $old_path, $m)) {
         $platform = $m[1];
         // 遍历 platform/$platform/hwmon/* 目录，找对应 pwmN
-        foreach (glob("/sys/devices/platform/$platform/hwmon/hwmon*") as $dir) {
+        foreach (glob(fcp_sys_root() . "/sys/devices/platform/$platform/hwmon/hwmon*") as $dir) {
             if (is_file("$dir/$pwmN") && is_file("$dir/name")) {
                 $chip = normalize_chip_name(trim(@file_get_contents("$dir/name")));
                 if ($chip !== '') {
@@ -53,7 +60,7 @@ function extract_chip_and_pwm_from_path(string $old_path): ?array {
     preg_match_all('/hwmon(\d+)/', $old_path, $hm);
     if (!empty($hm[1])) {
         $hwmon = 'hwmon' . end($hm[1]);
-        $name_file = "/sys/class/hwmon/$hwmon/name";
+        $name_file = fcp_sys_root() . "/sys/class/hwmon/$hwmon/name";
         if (is_file($name_file)) {
             $chip = normalize_chip_name(trim(@file_get_contents($name_file)));
             if ($chip !== '') return [$chip, $pwmN];
@@ -61,7 +68,7 @@ function extract_chip_and_pwm_from_path(string $old_path): ?array {
     }
 
     // 最后兜底：扫描所有 hwmon*
-    foreach (glob("/sys/class/hwmon/hwmon*") as $dir) {
+    foreach (glob(fcp_sys_root() . "/sys/class/hwmon/hwmon*") as $dir) {
         if (is_file("$dir/$pwmN") && is_file("$dir/name")) {
             $chip = normalize_chip_name(trim(@file_get_contents("$dir/name")));
             if ($chip !== '') return [$chip, $pwmN];
@@ -173,7 +180,7 @@ function migrate_cfg_and_labels(string $plugin): void {
 
 function list_pwm() {
   $out = [];
-  exec("find /sys/devices -type f -iname 'pwm[0-9]' -exec dirname \"{}\" + | uniq", $chips);
+  exec("find " . escapeshellarg(fcp_sys_root() . "/sys/devices") . " -type f -iname 'pwm[0-9]' -exec dirname \"{}\" + | uniq", $chips);
   foreach ($chips as $chip) {
     $name = is_file("$chip/name") ? trim(file_get_contents("$chip/name")) : '';
     foreach (glob("$chip/pwm[0-9]") as $pwm) {
@@ -217,7 +224,7 @@ function detect_cpu_sensors(): array {
   $superio_prefixes = ['it8','it86','it87','nct6','nct67','nct68','nuvoton'];
   $deny_chips = ['amdgpu','nvme','gpu'];
 
-  foreach (glob('/sys/class/hwmon/hwmon*') as $hwmonPath) {
+  foreach (glob(fcp_sys_root() . "/sys/class/hwmon/hwmon*") as $hwmonPath) {
     $nameFile = "$hwmonPath/name";
     if (!is_readable($nameFile)) continue;
     $chipName = trim(@file_get_contents($nameFile));
