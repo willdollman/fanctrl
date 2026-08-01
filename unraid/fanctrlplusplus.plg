@@ -1,13 +1,13 @@
 <?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
 <!ENTITY name "fanctrlplusplus">
-<!ENTITY version "0.0.4">
+<!ENTITY version "0.0.5">
 <!ENTITY author "willdollman">
 <!ENTITY launch "Settings/fanctrlplusplus">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/willdollman/fanctrl/main/unraid/fanctrlplusplus.plg">
 <!ENTITY source "/boot/config/plugins/&name;">
 <!ENTITY txz "&source;/&name;-&version;.txz">
-<!ENTITY MD5 "494c1205fec281b22794f5df741a3b58">
+<!ENTITY MD5 "4cac3c565828c65e27a3bf8c8c5ba406">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" min="6.9.0">
 <ICON>/usr/local/emhttp/plugins/fanctrlplusplus/images/fanctrlplus.png</ICON>
