@@ -12,6 +12,9 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" min="6.9.0">
 <ICON>/usr/local/emhttp/plugins/fanctrlplusplus/images/fanctrlplus.png</ICON>
 <CHANGES>
+###0.0.5
+- Kept setup controls interactive when Unraid remounts page elements.
+
 ###0.0.4
 - Fixed Add Fan not updating the interface.
 - Fixed slider fills for ranges with non-zero minimum values.

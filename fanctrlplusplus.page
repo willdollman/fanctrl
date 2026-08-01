@@ -168,19 +168,23 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
   }
   const API = '/plugins/fanctrlplusplus/include/FanctrlLogic.php';
   const SAVE = '/plugins/fanctrlplusplus/include/update.fanctrlplusplus.php';
-  const grid = document.getElementById('fcp2-grid');
   const $ = (el, sel) => el.querySelector(sel);
   const $$ = (el, sel) => Array.from(el.querySelectorAll(sel));
   const historyModal = document.getElementById('fcp2-history');
   let historyCharts = [];
   let historyRequest = 0;
-  const manualDetails = document.getElementById('fcp2-manual');
-  const manualController = document.getElementById('fcp2-manual-controller');
-  const manualRange = document.getElementById('fcp2-manual-range');
-  const manualPercent = document.getElementById('fcp2-manual-percent');
-  const manualStart = document.getElementById('fcp2-manual-start');
-  const manualWarning = document.getElementById('fcp2-manual-warning');
   let manualActive = false;
+
+  function manualElements() {
+    return {
+      details: document.getElementById('fcp2-manual'),
+      controller: document.getElementById('fcp2-manual-controller'),
+      range: document.getElementById('fcp2-manual-range'),
+      percent: document.getElementById('fcp2-manual-percent'),
+      start: document.getElementById('fcp2-manual-start'),
+      warning: document.getElementById('fcp2-manual-warning'),
+    };
+  }
 
   function closeHistory() {
     historyRequest++;
@@ -471,12 +475,14 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
       .then(() => toast(`Applied current temperatures to ${name}`));
   }
 
-  document.getElementById('fcp2-addfan').addEventListener('click', () => {
+  function addFan() {
+    const currentGrid = document.getElementById('fcp2-grid');
+    const addButton = document.getElementById('fcp2-addfan');
     const card = document.getElementById('fcp2-tpl-fan').content.firstElementChild.cloneNode(true);
-    grid.insertBefore(card, document.getElementById('fcp2-addfan'));
+    currentGrid.insertBefore(card, addButton);
     initCard(card);
     $(card, '.f-custom').focus();
-  });
+  }
 
   document.getElementById('fcp2-applyall').addEventListener('click', async () => {
     for (const card of $$(document, '.fcp2-card.is-dirty')) {
@@ -497,24 +503,25 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
   }
 
   function manualLabel(path) {
-    const option = Array.from(manualController.options).find(o => o.value === path);
+    const option = Array.from(manualElements().controller.options).find(o => o.value === path);
     return option ? option.textContent : path;
   }
   function renderManual(state) {
+    const manual = manualElements();
     manualActive = !!state.active;
-    manualWarning.hidden = !manualActive;
-    manualStart.textContent = manualActive ? 'Update speed' : 'Start test';
+    manual.warning.hidden = !manualActive;
+    manual.start.textContent = manualActive ? 'Update speed' : 'Start test';
     for (const button of $$(document, '.fcp2-manual-stop')) button.disabled = !manualActive;
     if (!manualActive) return;
-    manualDetails.open = true;
+    manual.details.open = true;
     if (!state.controller || state.percent == null || state.expires_at == null) {
       document.getElementById('fcp2-manual-warning-text').textContent =
         'Manual PWM state requires restoration; use Stop test or check the system log';
       return;
     }
-    manualController.value = state.controller;
-    manualRange.value = manualPercent.value = state.percent;
-    fillRange(manualRange);
+    manual.controller.value = state.controller;
+    manual.range.value = manual.percent.value = state.percent;
+    fillRange(manual.range);
     const remaining = Math.max(0, state.expires_at - Math.floor(Date.now() / 1000));
     document.getElementById('fcp2-manual-warning-text').textContent =
       `${manualLabel(state.controller)} at ${state.percent}% · auto-stops in ${Math.ceil(remaining / 60)} min`;
@@ -543,26 +550,46 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
       if (mutation) manualMutationPending = false;
     }
   }
-  manualRange.addEventListener('input', () => { manualPercent.value = manualRange.value; fillRange(manualRange); });
-  manualPercent.addEventListener('input', () => {
-    const value = Math.max(10, Math.min(100, parseInt(manualPercent.value, 10) || 10));
-    manualRange.value = value; fillRange(manualRange);
-  });
-  manualStart.addEventListener('click', async () => {
+  function syncManualRange() {
+    const manual = manualElements();
+    manual.percent.value = manual.range.value;
+    fillRange(manual.range);
+  }
+  function syncManualPercent() {
+    const manual = manualElements();
+    const value = Math.max(10, Math.min(100, parseInt(manual.percent.value, 10) || 10));
+    manual.range.value = value; fillRange(manual.range);
+  }
+  async function startManualTest() {
+    const manual = manualElements();
     const wasActive = manualActive;
-    const percent = Number(manualPercent.value);
+    const percent = Number(manual.percent.value);
     if (!Number.isInteger(percent) || percent < 10 || percent > 100) { toast('Speed must be from 10 to 100%', true); return; }
-    const fd = new FormData(); fd.append('controller', manualController.value); fd.append('percent', String(percent));
+    const fd = new FormData(); fd.append('controller', manual.controller.value); fd.append('percent', String(percent));
     const state = await manualRequest('manual_start', fd);
     if (state) toast(wasActive ? 'Manual test speed updated' : 'Manual test started');
-  });
-  manualDetails.addEventListener('toggle', () => { if (manualActive && !manualDetails.open) manualDetails.open = true; });
-  for (const button of $$(document, '.fcp2-manual-stop')) button.addEventListener('click', async () => {
+  }
+  async function stopManualTest() {
     const fd = new FormData();
     const state = await manualRequest('manual_stop', fd);
     if (state) toast('Manual test stopped');
-  });
-  fillRange(manualRange);
+  }
+  // Unraid's newer web UI can replace mounted page controls. Delegating from
+  // document keeps these setup actions live when their elements are replaced.
+  document.addEventListener('click', e => {
+    if (!(e.target instanceof Element)) return;
+    if (e.target.closest('#fcp2-addfan')) addFan();
+    else if (e.target.closest('#fcp2-manual-start')) startManualTest();
+    else if (e.target.closest('.fcp2-manual-stop')) stopManualTest();
+  }, true);
+  document.addEventListener('input', e => {
+    if (e.target.matches?.('#fcp2-manual-range')) syncManualRange();
+    else if (e.target.matches?.('#fcp2-manual-percent')) syncManualPercent();
+  }, true);
+  document.addEventListener('toggle', e => {
+    if (e.target.matches?.('#fcp2-manual') && manualActive && !e.target.open) e.target.open = true;
+  }, true);
+  fillRange(manualElements().range);
 
   document.getElementById('fcp2-airflow').addEventListener('change', async e => {
     const fd = new FormData();
