@@ -46,6 +46,7 @@ if (is_file("$cfg_dir/pwm_labels.cfg")) {
 $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
 ?>
 <link rel="stylesheet" href="/plugins/fanctrlplusplus/css/fcp2.css?v=2.0.0">
+<script src="/plugins/fanctrlplusplus/js/chart.min.js"></script>
 
 <div class="fcp2">
 
@@ -66,6 +67,12 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
     <button type="button" class="btn btn-accent" id="fcp2-applyall" disabled>Apply changes</button>
   </div>
 
+  <div class="fcp2-manual-warning" id="fcp2-manual-warning" role="alert" hidden>
+    <strong>Manual fan speed test active</strong>
+    <span id="fcp2-manual-warning-text"></span>
+    <button type="button" class="btn btn-danger fcp2-manual-stop">Stop test</button>
+  </div>
+
   <div class="fcp2-grid" id="fcp2-grid">
     <?php foreach ($fans as $cfg) echo render_fan_card($cfg, $pwms, $disk_groups, $temp_sensors, $pwm_labels); ?>
     <button type="button" class="fcp2-addcard" id="fcp2-addfan">+ Add fan</button>
@@ -80,16 +87,32 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
         <input type="text" class="label-in" placeholder="Label (e.g. Rear exhaust)"
                value="<?= htmlspecialchars($pwm_labels[$p] ?? '') ?>">
         <button type="button" class="btn o-savelabel">Save label</button>
-        <select class="o-mode" style="width:auto">
-          <option value="pause">Pause 30 s</option>
-          <option value="max">Full speed 30 s</option>
-          <option value="pulse">Pulse</option>
-        </select>
-        <button type="button" class="btn o-identify">Identify</button>
       </div>
       <?php endforeach; ?>
       <?php if (empty($pwms)): ?><span class="muted">No PWM-capable fan headers found.</span><?php endif; ?>
     </div>
+    <details class="fcp2-manual" id="fcp2-manual">
+      <summary>Manual fan speed test</summary>
+      <div class="fcp2-manual-body">
+        <label>Controller
+          <select id="fcp2-manual-controller">
+            <?php foreach ($pwms as $pwm): $p = $pwm['sensor']; $label = trim($pwm_labels[$p] ?? ''); ?>
+              <option value="<?= htmlspecialchars($p) ?>"><?= htmlspecialchars(($label ? $label . ' — ' : '') . $pwm['chip'] . ' · ' . $pwm['name']) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </label>
+        <div class="fcp2-manual-speed">
+          <label for="fcp2-manual-range">Speed</label>
+          <input id="fcp2-manual-range" type="range" min="10" max="100" value="40">
+          <span class="fcp2-num"><input id="fcp2-manual-percent" type="number" min="10" max="100" step="1" value="40"><span class="unit">%</span></span>
+        </div>
+        <div class="fcp2-manual-actions">
+          <button type="button" class="btn btn-accent" id="fcp2-manual-start" <?= empty($pwms) ? 'disabled' : '' ?>>Start test</button>
+          <button type="button" class="btn btn-danger fcp2-manual-stop" disabled>Stop test</button>
+        </div>
+        <p class="fcp2-help"><strong>Warning:</strong> Low speeds can still stall some fans. Monitor the fan physically. The test requires an explicit stop and automatically stops after 10 minutes as a fail-safe.</p>
+      </div>
+    </details>
     <div class="fcp2-airflow">
       <label class="tgl"><input type="checkbox" id="fcp2-airflow" <?= $airflow_on ? 'checked' : '' ?>><span class="tr"></span></label>
       Show FCP Airflow tile on the Dashboard
@@ -108,6 +131,24 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
 
 <div class="fcp2 fcp2-toast" id="fcp2-toast"></div>
 
+<div class="fcp2 fcp2-history-backdrop" id="fcp2-history" hidden>
+  <div class="fcp2-history-modal" role="dialog" aria-modal="true" aria-labelledby="fcp2-history-title">
+    <div class="fcp2-history-head">
+      <h2 id="fcp2-history-title">Fan history</h2>
+      <button type="button" class="btn-link fcp2-history-close" aria-label="Close history">Close</button>
+    </div>
+    <div class="fcp2-history-empty" aria-live="polite">No history data yet.</div>
+    <div class="fcp2-history-charts" hidden>
+      <div class="fcp2-chart"><canvas id="fcp2-history-temp" aria-label="Temperature history chart" role="img"></canvas></div>
+      <div class="fcp2-chart"><canvas id="fcp2-history-speed" aria-label="Fan speed history chart" role="img"></canvas></div>
+    </div>
+    <div class="fcp2-history-foot">
+      <a class="btn fcp2-history-export" href="#">Export CSV</a>
+      <button type="button" class="btn fcp2-history-close">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function () {
   'use strict';
@@ -124,6 +165,67 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
   const grid = document.getElementById('fcp2-grid');
   const $ = (el, sel) => el.querySelector(sel);
   const $$ = (el, sel) => Array.from(el.querySelectorAll(sel));
+  const historyModal = document.getElementById('fcp2-history');
+  let historyCharts = [];
+  let historyRequest = 0;
+  const manualDetails = document.getElementById('fcp2-manual');
+  const manualController = document.getElementById('fcp2-manual-controller');
+  const manualRange = document.getElementById('fcp2-manual-range');
+  const manualPercent = document.getElementById('fcp2-manual-percent');
+  const manualStart = document.getElementById('fcp2-manual-start');
+  const manualWarning = document.getElementById('fcp2-manual-warning');
+  let manualActive = false;
+
+  function closeHistory() {
+    historyRequest++;
+    historyCharts.forEach(chart => chart.destroy());
+    historyCharts = [];
+    historyModal.hidden = true;
+  }
+  async function openHistory(card) {
+    const name = card.dataset.savedName;
+    if (!name) { toast('Save the fan first', true); return; }
+    closeHistory();
+    historyModal.hidden = false;
+    document.getElementById('fcp2-history-title').textContent = `${name} — one-hour transient history`;
+    $(historyModal, '.fcp2-history-export').href = `${API}?op=export_history&custom=${encodeURIComponent(name)}`;
+    const empty = $(historyModal, '.fcp2-history-empty');
+    const charts = $(historyModal, '.fcp2-history-charts');
+    empty.textContent = 'Loading history…'; empty.hidden = false; charts.hidden = true;
+    $(historyModal, '.fcp2-history-close').focus();
+    const request = ++historyRequest;
+    try {
+      const data = await (await fetch(`${API}?op=history&custom=${encodeURIComponent(name)}`)).json();
+      if (request !== historyRequest || historyModal.hidden) return;
+      if (!data.samples || !data.samples.length) { empty.textContent = 'No history data yet.'; return; }
+      const labels = data.samples.map(s => new Date(s.timestamp * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
+      const common = { responsive: true, maintainAspectRatio: false, elements: { point: { radius: 0 } },
+        interaction: { intersect: false }, plugins: { legend: { labels: { color: '#dfe3ea' } } },
+        scales: { x: { ticks: { color: '#8b93a2', autoSkip: true, maxTicksLimit: 8 }, grid: { color: '#2e333d' } } } };
+      empty.hidden = true; charts.hidden = false;
+      historyCharts.push(new Chart(document.getElementById('fcp2-history-temp'), { type: 'line', data: { labels,
+        datasets: [{ label: 'Temperature °C', data: data.samples.map(s => s.temp_c), borderColor: '#ff8c2f', spanGaps: false }] },
+        options: {...common, scales: {...common.scales, y: { ticks: { color: '#8b93a2' }, grid: { color: '#2e333d' }, title: { display: true, text: '°C', color: '#8b93a2' } }}} }));
+      historyCharts.push(new Chart(document.getElementById('fcp2-history-speed'), { type: 'line', data: { labels, datasets: [
+        { label: 'RPM', data: data.samples.map(s => s.rpm), borderColor: '#6ab0ff', yAxisID: 'rpm', spanGaps: false },
+        { label: 'PWM %', data: data.samples.map(s => s.pwm_percent), borderColor: '#34d17b', yAxisID: 'pwm', spanGaps: false }
+      ]}, options: {...common, scales: {...common.scales,
+        rpm: { position: 'left', beginAtZero: true, ticks: { color: '#8b93a2' }, grid: { color: '#2e333d' }, title: { display: true, text: 'RPM', color: '#8b93a2' } },
+        pwm: { position: 'right', min: 0, max: 100, ticks: { color: '#8b93a2' }, grid: { drawOnChartArea: false }, title: { display: true, text: 'PWM %', color: '#8b93a2' } }
+      }}}));
+    } catch (e) {
+      historyCharts.forEach(chart => chart.destroy());
+      historyCharts = [];
+      charts.hidden = true;
+      if (request === historyRequest && !historyModal.hidden) {
+        empty.textContent = 'History could not be loaded.';
+        empty.hidden = false;
+      }
+    }
+  }
+  for (const button of $$(historyModal, '.fcp2-history-close')) button.addEventListener('click', closeHistory);
+  historyModal.addEventListener('click', e => { if (e.target === historyModal) closeHistory(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !historyModal.hidden) closeHistory(); });
 
   // ------- toast -------
   let toastTimer;
@@ -281,6 +383,7 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
     $(card, '.f-revert').addEventListener('click', () => location.reload());
     $(card, '.f-delete').addEventListener('click', () => del(card));
     $(card, '.f-runnow').addEventListener('click', () => runNow(card));
+    $(card, '.f-history').addEventListener('click', () => openHistory(card));
 
     card.addEventListener('input', () => { setDirty(card); });
     card.addEventListener('change', e => {
@@ -383,13 +486,75 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
       const j = await (await fetch(API, { method: 'POST', body: fd })).json();
       toast(j.message || 'Label saved', j.status !== 'ok');
     });
-    $(row, '.o-identify').addEventListener('click', async () => {
-      const mode = $(row, '.o-mode').value;
-      const j = await (await fetch(
-        `${API}?op=identify&pwm=${encodeURIComponent(row.dataset.pwm)}&mode=${mode}`)).json();
-      toast(j.message || 'Identify started', j.status !== 'ok');
-    });
   }
+
+  function manualLabel(path) {
+    const option = Array.from(manualController.options).find(o => o.value === path);
+    return option ? option.textContent : path;
+  }
+  function renderManual(state) {
+    manualActive = !!state.active;
+    manualWarning.hidden = !manualActive;
+    manualStart.textContent = manualActive ? 'Update speed' : 'Start test';
+    for (const button of $$(document, '.fcp2-manual-stop')) button.disabled = !manualActive;
+    if (!manualActive) return;
+    manualDetails.open = true;
+    if (!state.controller || state.percent == null || state.expires_at == null) {
+      document.getElementById('fcp2-manual-warning-text').textContent =
+        'Manual PWM state requires restoration; use Stop test or check the system log';
+      return;
+    }
+    manualController.value = state.controller;
+    manualRange.value = manualPercent.value = state.percent;
+    fillRange(manualRange);
+    const remaining = Math.max(0, state.expires_at - Math.floor(Date.now() / 1000));
+    document.getElementById('fcp2-manual-warning-text').textContent =
+      `${manualLabel(state.controller)} at ${state.percent}% · auto-stops in ${Math.ceil(remaining / 60)} min`;
+  }
+  let manualGeneration = 0;
+  let manualMutationPending = false;
+  async function manualRequest(op, body, {silent = false} = {}) {
+    const mutation = op !== 'manual_status';
+    if (mutation && manualMutationPending) return null;
+    if (!mutation && manualMutationPending) return null;
+    if (mutation) manualMutationPending = true;
+    const generation = mutation ? ++manualGeneration : manualGeneration;
+    try {
+      const response = await fetch(`${API}?op=${op}`, body ? {method: 'POST', body} : undefined);
+      const state = await response.json();
+      if (generation === manualGeneration && Object.prototype.hasOwnProperty.call(state, 'active')) renderManual(state);
+      if (state.status !== 'ok') {
+        if (!silent) toast(state.message || 'Manual test request failed', true);
+        return null;
+      }
+      return state;
+    } catch (e) {
+      if (!silent) toast(e.message || String(e), true);
+      return null;
+    } finally {
+      if (mutation) manualMutationPending = false;
+    }
+  }
+  manualRange.addEventListener('input', () => { manualPercent.value = manualRange.value; fillRange(manualRange); });
+  manualPercent.addEventListener('input', () => {
+    const value = Math.max(10, Math.min(100, parseInt(manualPercent.value, 10) || 10));
+    manualRange.value = value; fillRange(manualRange);
+  });
+  manualStart.addEventListener('click', async () => {
+    const wasActive = manualActive;
+    const percent = Number(manualPercent.value);
+    if (!Number.isInteger(percent) || percent < 10 || percent > 100) { toast('Speed must be from 10 to 100%', true); return; }
+    const fd = new FormData(); fd.append('controller', manualController.value); fd.append('percent', String(percent));
+    const state = await manualRequest('manual_start', fd);
+    if (state) toast(wasActive ? 'Manual test speed updated' : 'Manual test started');
+  });
+  manualDetails.addEventListener('toggle', () => { if (manualActive && !manualDetails.open) manualDetails.open = true; });
+  for (const button of $$(document, '.fcp2-manual-stop')) button.addEventListener('click', async () => {
+    const fd = new FormData();
+    const state = await manualRequest('manual_stop', fd);
+    if (state) toast('Manual test stopped');
+  });
+  fillRange(manualRange);
 
   document.getElementById('fcp2-airflow').addEventListener('change', async e => {
     const fd = new FormData();
@@ -401,6 +566,7 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
 
   // ------- live status -------
   async function poll() {
+    await manualRequest('manual_status', null, {silent: true});
     try {
       const st = await (await fetch(`${API}?op=status`)).json();
       const pill = document.getElementById('fcp2-status');

@@ -2,6 +2,10 @@
 
 FanCtrl PlusPlus is an independently installable Unraid plugin for automatic PWM fan control based on HDD, NVMe, Unassigned Devices, and optional CPU temperatures. It supports per-fan temperature sources and thresholds, quiet mode, labels, and dashboard monitoring.
 
+Each saved fan also has approximately one hour of temperature, RPM, and PWM history in the current card UI, with CSV export. History is transient (stored in tmpfs) and starts fresh after reboot or plugin reinstall.
+
+The PWM outputs panel includes a manual fan speed test for setup. Tests have a hard 10% minimum, remain visibly active until explicitly stopped, and automatically stop and restore the controller after 10 minutes.
+
 > **Hardware safety:** uninstall or disable every other fan controller before using FanCtrl PlusPlus. FanCtrl PlusPlus has a separate plugin and filesystem identity and can coexist with other plugins, but two controllers must never drive the same PWM hardware.
 
 ## Install

@@ -5,12 +5,23 @@ cfg_path="/boot/config/plugins/$plugin"
 loop_script="/usr/local/emhttp/plugins/$plugin/scripts/fanctrlplusplus_loop.sh"
 dashboard_updater="/usr/local/emhttp/plugins/$plugin/scripts/fanctrlplusplus_dashboard_update.sh"
 pid_dir="/var/run"
+script_dir=$(dirname "$(readlink -f "$0")")
+source "$script_dir/fanctrl_manual_override.sh"
+
+wait_stopped() {
+  local pattern=$1
+  for _ in {1..20}; do
+    pgrep -f "$pattern" >/dev/null || return
+    sleep 0.1
+  done
+}
 
 fanctrlplusplus.start() {
   # 清除用户手动 stop 标记
   rm -f /var/run/fanctrlplusplus.user_stopped
 
   pkill -f "$loop_script" 2>/dev/null
+  wait_stopped "$loop_script"
 
   # 启动前执行migrate_cfg_and_labels
   php -r "require_once '/usr/local/emhttp/plugins/fanctrlplusplus/include/Common.php'; migrate_cfg_and_labels('fanctrlplusplus');"
@@ -41,21 +52,32 @@ fanctrlplusplus.start() {
 
   # 启动 dashboard updater（避免重复）
   pkill -f "$dashboard_updater" 2>/dev/null
+  wait_stopped "$dashboard_updater"
   if [[ -x "$dashboard_updater" ]]; then
     nohup "$dashboard_updater" >/dev/null 2>&1 &
   fi
 }
 
 fanctrlplusplus.stop() {
+  # Keep restoration, worker shutdown, and stop-policy writes one transition.
+  exec 8>"$MANUAL_OVERRIDE_LOCK" || return 1
+  flock 8 || return 1
+  if ! manual_override_restore_locked; then
+    logger -t "$plugin" "Refusing to stop: manual PWM restoration failed; state retained"
+    flock -u 8
+    return 1
+  fi
   # 设置用户手动停止标记
   touch /var/run/fanctrlplusplus.user_stopped
 
   pkill -f "$loop_script"
+  wait_stopped "$loop_script"
   rm -f "$pid_dir"/${plugin}_*.pid
   logger -t "$plugin" "All fanctrlplusplus stopped"
 
   # 停止 dashboard updater
   pkill -f "$dashboard_updater"
+  wait_stopped "$dashboard_updater"
 
   # ✅ 只对 fanctrlplusplus 控制的 pwm 设为 50%，其他不动
   for cfg in "$cfg_path"/${plugin}_*.cfg; do
@@ -68,12 +90,11 @@ fanctrlplusplus.stop() {
     [[ -z "$pwm" || ! -w "$pwm" ]] && continue
 
     enable="${pwm}_enable"
-    if [[ -w "$enable" ]]; then
-      echo 1 > "$enable"
-      echo 128 > "$pwm"
-      logger -t "$plugin" "Stopped control of $(basename "$pwm"); set to 50% (manual mode) to ensure sufficient airflow and avoid overheating"
-    fi
+    if [[ -e "$enable" ]]; then [[ -w "$enable" ]] && echo 1 > "$enable" || continue; fi
+    echo 128 > "$pwm"
+    logger -t "$plugin" "Stopped control of $(basename "$pwm"); set to 50% (manual mode) to ensure sufficient airflow and avoid overheating"
   done
+  flock -u 8
 }
 
 fanctrlplusplus.status() {
@@ -92,7 +113,7 @@ case "$1" in
   start) fanctrlplusplus.start ;;
   stop) fanctrlplusplus.stop ;;
   restart)
-    fanctrlplusplus.stop
+    fanctrlplusplus.stop || exit $?
     sleep 1
     fanctrlplusplus.start
     ;;

@@ -4,6 +4,7 @@ cfg_file="$1"; [[ -f $cfg_file ]] || exit 1
 source "$cfg_file"; max=${max:-255}
 script_dir=$(dirname "$(readlink -f "$0")")
 source "$script_dir/fanctrl_algo.sh"; source "$script_dir/fanctrl_sensors.sh"
+source "$script_dir/fanctrl_manual_override.sh"
 configure_sources
 
 min_pwm_abs=${pwm:-0}
@@ -13,7 +14,7 @@ else idle_pwm_abs=0; fi
 (( idle_pwm_abs < 0 )) && idle_pwm_abs=0; (( idle_pwm_abs > max )) && idle_pwm_abs=$max
 (( idle_pwm_abs > min_pwm_abs )) && idle_pwm_abs=$min_pwm_abs
 
-plugin=fanctrlplusplus; custom=${custom:-$(basename "$cfg_file" .cfg)}; controller_enable=${controller}_enable
+plugin=fanctrlplusplus; custom=${custom:-$(basename "$cfg_file" .cfg)}
 tick=${tick:-5}; disk_poll_s=$((${interval:-1} * 60)); (( disk_poll_s < tick )) && disk_poll_s=$tick
 if [[ $controller =~ pwm([0-9]+)$ ]]; then fan_index=${BASH_REMATCH[1]}; fan_path=$(dirname "$controller")/fan${fan_index}_input; else fan_path=; fi
 mkdir -p "/var/tmp/$plugin"
@@ -25,7 +26,7 @@ log_state() {
 }
 
 algo_init
-last_written=-1; last_logged=-1; last_crit=0; next_disk_poll=0; now=0
+last_logged=-1; last_crit=0; next_disk_poll=0; now=0
 CURRENT=()
 while true; do
   for ((i=0; i<SRC_COUNT; i++)); do
@@ -43,7 +44,7 @@ while true; do
     if (( CURRENT[i] > hottest )); then hottest=${CURRENT[i]}; display_temp=${CURRENT[i]}; temp_origin="(${SRC_LABEL[i]})"; fi
   done
   echo "$display_temp $temp_origin" > "/var/tmp/$plugin/temp_${plugin}_${custom}"
-  if (( A_PWM != last_written )); then [[ -f $controller_enable ]] && echo 1 > "$controller_enable"; echo "$A_PWM" > "$controller"; last_written=$A_PWM; fi
+  manual_override_apply "$controller" "$A_PWM"
   if (( last_logged == -1 )); then log_state ""; last_logged=$A_PWM
   elif (( A_CRIT != last_crit )); then if (( A_CRIT )); then log_state "Critical temp! "; else log_state "Recovered: "; fi; last_logged=$A_PWM
   elif (( A_PWM-last_logged >= 10 || last_logged-A_PWM >= 10 )); then log_state ""; last_logged=$A_PWM; fi

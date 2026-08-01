@@ -163,20 +163,43 @@ foreach ($kv as $k => $v) {
 
 // ---------- write (atomic), then rename bookkeeping ------------------------
 if (!is_file("$cfgpath/$file")) fail('Original config file not found; reload the page.');
-
+$old_cfg = @parse_ini_file("$cfgpath/$file");
+$old_custom = is_array($old_cfg) ? trim($old_cfg['custom'] ?? '') : '';
 $tmp = "$cfgpath/.$new_file.tmp";
 if (file_put_contents($tmp, $content, LOCK_EX) === false) fail('Failed to write config.');
-if (!rename($tmp, "$cfgpath/$new_file")) { @unlink($tmp); fail('Failed to write config.'); }
+
+$rc = '/etc/rc.d/rc.fanctrlplusplus';
+if (is_executable($rc)) {
+  $output = []; $status = 0;
+  exec(escapeshellarg($rc) . ' stop 2>&1', $output, $status);
+  if ($status !== 0) {
+    @unlink($tmp);
+    fail('Could not safely stop fan control; manual PWM restoration failed. No settings were changed.');
+  }
+}
+
+if (!rename($tmp, "$cfgpath/$new_file")) {
+  @unlink($tmp);
+  if (is_executable($rc)) exec(escapeshellarg($rc) . ' start');
+  fail('Failed to write config.');
+}
 
 if ($new_file !== $file) {
   @unlink("$cfgpath/$file");
   OrderManager::replaceFileName($file, $new_file);
 }
+$renamed = $old_custom !== $custom && preg_match('/^[A-Za-z0-9_]+$/', $old_custom);
+if ($renamed) {
+  $history_dir = "/var/tmp/$plugin";
+  foreach (['history', 'temp', 'rpm', 'pwm', 'status'] as $kind) {
+    $suffix = $kind === 'history' ? '.csv' : '';
+    @rename("$history_dir/{$kind}_{$plugin}_{$old_custom}{$suffix}",
+      "$history_dir/{$kind}_{$plugin}_{$custom}{$suffix}");
+  }
+  @rename("$history_dir/.history_compact_{$old_custom}", "$history_dir/.history_compact_{$custom}");
+}
 
 // restart the control daemon so changes take effect
-$rc = '/etc/rc.d/rc.fanctrlplusplus';
-if (is_executable($rc)) {
-  exec("nohup $rc restart >/dev/null 2>&1 &");
-}
+if (is_executable($rc)) exec(escapeshellarg($rc) . ' start');
 
 echo json_encode(['status' => 'ok', 'file' => $new_file]);

@@ -5,6 +5,8 @@ LOG="/var/log/fanctrlplusplus_array_watch.log"
 CHECK_INTERVAL=10
 rc_script="/etc/rc.d/rc.${plugin}"
 pidfile="/var/run/fanctrlplusplus.user_stopped"
+script_dir=$(dirname "$(readlink -f "$0")")
+source "$script_dir/fanctrl_manual_override.sh"
 
 last_md_state=""
 last_fanctrl_state=0
@@ -26,6 +28,7 @@ is_fanctrl_running() {
 log "Array monitor started"
 
 while true; do
+  manual_override_expire "$(date +%s)" || log "Manual override restoration failed; state retained"
   current_md_state=$(grep -oP 'mdState=\K\w+' < <(/usr/local/sbin/mdcmd status 2>/dev/null) || echo "")
   fanctrl_running=0
   is_fanctrl_running && fanctrl_running=1

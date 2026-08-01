@@ -225,6 +225,7 @@ function render_fan_card(array $cfg, array $pwms, array $disk_groups,
       Syslog <label class="tgl"><input type="checkbox" class="f-syslog" <?= $syslog ? 'checked' : '' ?>><span class="tr"></span></label>
     </span>
     <span class="spacer"></span>
+    <button type="button" class="btn-link f-history">History</button>
     <button type="button" class="btn-link f-runnow">Run now</button>
     <button type="button" class="btn-link danger f-delete">Delete</button>
   </div>

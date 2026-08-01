@@ -1,8 +1,8 @@
 #!/bin/bash
 # Manual "Run Now": read every configured source and apply max immediate demand.
 plugin=fanctrlplusplus; cfg_path=/boot/config/plugins/$plugin; custom=$1; cfg_file=$cfg_path/${plugin}_$custom.cfg
-[[ -f $cfg_file ]] || exit 1; source "$cfg_file"; max=${max:-255}; controller_enable=${controller}_enable
-script_dir=$(dirname "$(readlink -f "$0")"); source "$script_dir/fanctrl_algo.sh"; source "$script_dir/fanctrl_sensors.sh"
+[[ -f $cfg_file ]] || exit 1; source "$cfg_file"; max=${max:-255}
+script_dir=$(dirname "$(readlink -f "$0")"); source "$script_dir/fanctrl_algo.sh"; source "$script_dir/fanctrl_sensors.sh"; source "$script_dir/fanctrl_manual_override.sh"
 configure_sources
 min_pwm_abs=${pwm:-0}; if [[ -n ${idle:-} ]]; then idle_pwm_abs=$idle; else idle_pwm_abs=0; fi
 (( idle_pwm_abs > min_pwm_abs )) && idle_pwm_abs=$min_pwm_abs
@@ -15,7 +15,7 @@ for ((i=0; i<SRC_COUNT; i++)); do
   if (( value > hottest )); then hottest=$value; display_temp=$value; temp_origin="(${SRC_LABEL[i]})"; fi
 done
 (( pwm_val < 0 )) && pwm_val=$idle_pwm_abs
-[[ -f $controller_enable ]] && echo 1 > "$controller_enable"; echo "$pwm_val" > "$controller"; sleep 4
+manual_override_apply "$controller" "$pwm_val" || exit 1; sleep 4
 fan_path=; if [[ $controller =~ pwm([0-9]+)$ ]]; then fan_path=$(dirname "$controller")/fan${BASH_REMATCH[1]}_input; fi
 [[ -n $fan_path && -f $fan_path ]] && rpm=$(cat "$fan_path") || rpm=?
 logger -t "$plugin" "Manual Run [${custom}] Temp=${display_temp}°C $temp_origin → PWM=$pwm_val → RPM=$rpm"

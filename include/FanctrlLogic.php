@@ -38,54 +38,205 @@ function scan_dir($dir) {
   return $out;
 }
 
+function valid_history_name($custom) {
+  return is_string($custom) && preg_match('/^[A-Za-z0-9_]+$/', $custom);
+}
+
+function read_fan_history($custom) {
+  $samples = [];
+  if (!valid_history_name($custom)) return $samples;
+  $path = "/var/tmp/fanctrlplusplus/history_fanctrlplusplus_{$custom}.csv";
+  $fh = @fopen($path, 'r');
+  if (!$fh) return $samples;
+  $cutoff = time() - 3600;
+  while (($row = fgetcsv($fh, 0, ',', '"', '')) !== false) {
+    if (count($row) !== 6 || !preg_match('/^\d+$/', $row[0])) continue;
+    if ((int)$row[0] < $cutoff) continue;
+    $malformed = false;
+    foreach ([1, 3, 4, 5] as $index) {
+      if ($row[$index] !== '' && !is_numeric($row[$index])) $malformed = true;
+    }
+    if ($malformed) continue;
+    $number = function ($value, $integer = false) {
+      if ($value === '' || !is_numeric($value)) return null;
+      return $integer ? (int)$value : (float)$value;
+    };
+    $samples[] = [
+      'timestamp' => (int)$row[0], 'temp_c' => $number($row[1]), 'source' => (string)$row[2],
+      'pwm' => $number($row[3], true), 'pwm_percent' => $number($row[4], true),
+      'rpm' => $number($row[5], true),
+    ];
+  }
+  fclose($fh);
+  return $samples;
+}
+
+const MANUAL_STATE = '/var/tmp/fanctrlplusplus/manual_override';
+const MANUAL_LOCK = '/var/run/fanctrlplusplus_manual.lock';
+
+function manual_recovery_read() {
+  $lines = @file(MANUAL_STATE, FILE_IGNORE_NEW_LINES);
+  if ($lines === false || count($lines) !== 6) return null;
+  [$controller, $pwm, $percent, $originalPwm, $originalEnable, $expires] = $lines;
+  if (!preg_match('#^/[^\s]*/pwm[0-9]+$#', $controller)) return null;
+  if (!preg_match('/^[0-9]+$/', $originalPwm) || (int)$originalPwm > 255) return null;
+  if ($originalEnable !== '-' && (!preg_match('/^[0-9]+$/', $originalEnable) || (int)$originalEnable > 255)) return null;
+  return ['controller' => $controller, 'pwm_raw' => $pwm, 'percent_raw' => $percent,
+    'original_pwm' => (int)$originalPwm,
+    'original_enable' => $originalEnable === '-' ? '-' : (int)$originalEnable,
+    'expires_raw' => $expires];
+}
+
+function manual_state_read() {
+  $state = manual_recovery_read();
+  if (!$state || !preg_match('/^[0-9]+$/', $state['pwm_raw']) || (int)$state['pwm_raw'] > 255 ||
+      !preg_match('/^[0-9]+$/', $state['percent_raw']) || (int)$state['percent_raw'] < 10 || (int)$state['percent_raw'] > 100 ||
+      !preg_match('/^[0-9]+$/', $state['expires_raw'])) return null;
+  $state['pwm'] = (int)$state['pwm_raw']; $state['percent'] = (int)$state['percent_raw'];
+  $state['expires_at'] = (int)$state['expires_raw'];
+  unset($state['pwm_raw'], $state['percent_raw'], $state['expires_raw']);
+  return $state;
+}
+
+function manual_restore($state = null) {
+  if (!file_exists(MANUAL_STATE)) return [true, null];
+  $state = $state ?? manual_recovery_read();
+  if (!$state) return [false, 'Manual test state is corrupt and cannot be safely restored; state was retained'];
+  $enable = $state['controller'] . '_enable';
+  if (!is_writable($state['controller']) || ($state['original_enable'] !== '-' && !is_writable($enable)))
+    return [false, 'Original PWM settings could not be restored because the controller is not writable; state was retained'];
+  if (@file_put_contents($state['controller'], $state['original_pwm'] . "\n") === false ||
+      ($state['original_enable'] !== '-' && @file_put_contents($enable, $state['original_enable'] . "\n") === false))
+    return [false, 'Writing the original PWM settings failed; state was retained'];
+  if (!@unlink(MANUAL_STATE)) return [false, 'Original PWM was restored but the manual state could not be removed; retry stop'];
+  return [true, null];
+}
+
+function manual_write_state($state) {
+  $dir = dirname(MANUAL_STATE);
+  if (!is_dir($dir)) @mkdir($dir, 0755, true);
+  $tmp = MANUAL_STATE . '.tmp.' . getmypid();
+  $body = implode("\n", [$state['controller'], $state['pwm'], $state['percent'],
+    $state['original_pwm'], $state['original_enable'], $state['expires_at']]) . "\n";
+  if (@file_put_contents($tmp, $body, LOCK_EX) === false || !@rename($tmp, MANUAL_STATE)) {
+    @unlink($tmp);
+    return false;
+  }
+  return true;
+}
+
+function manual_status($state) {
+  return $state ? ['status' => 'ok', 'active' => true, 'controller' => $state['controller'],
+    'percent' => $state['percent'], 'expires_at' => $state['expires_at']]
+    : ['status' => 'ok', 'active' => false];
+}
+
+function manual_error($message, $state = null) {
+  $response = ['status' => 'error', 'active' => file_exists(MANUAL_STATE), 'message' => $message];
+  if ($state && isset($state['percent'], $state['expires_at'])) {
+    $response += ['controller' => $state['controller'], 'percent' => $state['percent'], 'expires_at' => $state['expires_at']];
+  }
+  return $response;
+}
+
+function manual_lock() {
+  $lock = @fopen(MANUAL_LOCK, 'c');
+  if (!$lock || !flock($lock, LOCK_EX)) json_response(['status' => 'error', 'message' => 'Could not lock manual test']);
+  return $lock;
+}
+
 $op = $_GET['op'] ?? $_POST['op'] ?? '';
 
 switch ($op) {
-    
-  case 'identify':
-    $pwm  = $_GET['pwm']  ?? '';
-    $mode = $_GET['mode'] ?? 'pause';  // 默认 pause
-    if (is_file($pwm)) {
-      $original_pwm  = trim(@file_get_contents($pwm));
-      $pwm_enable    = $pwm . "_enable";
-      $original_mode = is_file($pwm_enable) ? trim(@file_get_contents($pwm_enable)) : '2';
+  case 'history':
+    $custom = $_GET['custom'] ?? '';
+    if (!valid_history_name($custom)) json_response(['status' => 'error', 'message' => 'Invalid fan name']);
+    json_response(['fan' => $custom, 'samples' => read_fan_history($custom)]);
+    break;
 
-      // 强制切到手动
-      @file_put_contents($pwm_enable, "1");
-
-      if ($mode === 'pause') {
-        // 直接停
-        @file_put_contents($pwm, "0");
-        $restore_cmd = "sleep 30 && echo " . escapeshellarg($original_mode) . " > " . escapeshellarg($pwm_enable) .
-                      " && echo " . escapeshellarg($original_pwm) . " > " . escapeshellarg($pwm);
-
-      } elseif ($mode === 'max') {
-        // 拉满
-        @file_put_contents($pwm, "255");
-        $restore_cmd = "sleep 30 && echo " . escapeshellarg($original_mode) . " > " . escapeshellarg($pwm_enable) .
-                      " && echo " . escapeshellarg($original_pwm) . " > " . escapeshellarg($pwm);
-
-      } elseif ($mode === 'pulse') {
-        // 10s 停 -> 10s 满速 -> 10s 停 -> 10s 满速
-        $restore_cmd = 
-          "echo 0   > " . escapeshellarg($pwm) . " && " .
-          "sleep 10 && echo 255 > " . escapeshellarg($pwm) . " && " .
-          "sleep 10 && echo 0   > " . escapeshellarg($pwm) . " && " .
-          "sleep 10 && echo 255 > " . escapeshellarg($pwm) . " && " .
-          "sleep 10 && echo " . escapeshellarg($original_mode) . " > " . escapeshellarg($pwm_enable) .
-                      " && echo " . escapeshellarg($original_pwm) . " > " . escapeshellarg($pwm);
-
-      } else {
-        json_response(['status' => 'error', 'message' => 'Unknown identify mode']);
-        break;
-      }
-
-      exec("nohup bash -c \"$restore_cmd\" >/dev/null 2>&1 &");
-      json_response(['status' => 'ok', 'message' => "Fan identify ($mode) started"]);
-
-    } else {
-      json_response(['status' => 'error', 'message' => 'Invalid PWM path']);
+  case 'export_history':
+    $custom = $_GET['custom'] ?? '';
+    if (!valid_history_name($custom)) json_response(['status' => 'error', 'message' => 'Invalid fan name']);
+    while (ob_get_level()) ob_end_clean();
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $custom . '-fan-history.csv"');
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['timestamp', 'temp_c', 'source', 'pwm', 'pwm_percent', 'rpm'], ',', '"', '');
+    foreach (read_fan_history($custom) as $sample) {
+      fputcsv($out, [date('c', $sample['timestamp']), $sample['temp_c'], $sample['source'],
+        $sample['pwm'], $sample['pwm_percent'], $sample['rpm']], ',', '"', '');
     }
+    fclose($out);
+    exit;
+
+  case 'manual_status':
+    $lock = manual_lock();
+    $state = manual_state_read();
+    if (file_exists(MANUAL_STATE) && (!$state || $state['expires_at'] <= time())) {
+      [$ok, $error] = manual_restore($state ?: manual_recovery_read());
+      $state = manual_state_read();
+      if (!$ok) { flock($lock, LOCK_UN); fclose($lock); json_response(manual_error($error, $state)); }
+    }
+    $response = manual_status(manual_state_read());
+    flock($lock, LOCK_UN); fclose($lock); json_response($response);
+    break;
+
+  case 'manual_stop':
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_response(['status' => 'error', 'active' => file_exists(MANUAL_STATE), 'message' => 'POST required']);
+    $lock = manual_lock();
+    $strict = manual_state_read();
+    [$ok, $error] = manual_restore($strict ?: manual_recovery_read());
+    $remaining = manual_state_read();
+    flock($lock, LOCK_UN); fclose($lock);
+    if (!$ok) json_response(manual_error($error, $remaining ?: $strict));
+    json_response(manual_status(null));
+    break;
+
+  case 'manual_start':
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_response(['status' => 'error', 'active' => file_exists(MANUAL_STATE), 'message' => 'POST required']);
+    $percentRaw = $_POST['percent'] ?? '';
+    $controller = $_POST['controller'] ?? '';
+    if (!is_string($percentRaw) || !preg_match('/^(?:[1-9][0-9]|100)$/', $percentRaw) || (int)$percentRaw < 10)
+      json_response(['status' => 'error', 'message' => 'Speed must be an integer from 10 to 100']);
+    $available = array_column(list_pwm(), 'sensor');
+    if (!is_string($controller) || !in_array($controller, $available, true))
+      json_response(['status' => 'error', 'message' => 'Invalid PWM controller']);
+    $lock = manual_lock();
+    $old = manual_state_read();
+    if (file_exists(MANUAL_STATE) && (!$old || $old['expires_at'] <= time() || $old['controller'] !== $controller)) {
+      [$ok, $error] = manual_restore($old ?: manual_recovery_read());
+      if (!$ok) { $remaining = manual_state_read(); flock($lock, LOCK_UN); fclose($lock); json_response(manual_error($error, $remaining ?: $old)); }
+      $old = null;
+    }
+    $enable = $controller . '_enable';
+    if (!is_writable($controller) || (file_exists($enable) && !is_writable($enable))) {
+      flock($lock, LOCK_UN); fclose($lock);
+      json_response(['status' => 'error', 'message' => 'PWM controller is not writable']);
+    }
+    $originalPwm = $old ? $old['original_pwm'] : trim((string)@file_get_contents($controller));
+    $originalEnable = $old ? $old['original_enable'] : (file_exists($enable) ? trim((string)@file_get_contents($enable)) : '-');
+    if (!preg_match('/^[0-9]+$/', (string)$originalPwm) || (int)$originalPwm > 255 ||
+        ($originalEnable !== '-' && (!preg_match('/^[0-9]+$/', (string)$originalEnable) || (int)$originalEnable > 255))) {
+      flock($lock, LOCK_UN); fclose($lock);
+      json_response(['status' => 'error', 'message' => 'PWM controller returned invalid values']);
+    }
+    $percent = (int)$percentRaw;
+    $state = ['controller' => $controller, 'pwm' => (int)round($percent * 255 / 100), 'percent' => $percent,
+      'original_pwm' => (int)$originalPwm, 'original_enable' => $originalEnable === '-' ? '-' : (int)$originalEnable, 'expires_at' => time() + 600];
+    if (!manual_write_state($state)) {
+      [$restored, $restoreError] = manual_restore($old ?: $state);
+      flock($lock, LOCK_UN); fclose($lock);
+      if (!$restored) json_response(manual_error('Could not save manual test state and restoration also failed: ' . $restoreError, manual_state_read() ?: ($old ?: $state)));
+      json_response(['status' => 'error', 'active' => false, 'message' => 'Could not save manual test state; original settings were restored']);
+    }
+    if ((file_exists($enable) && @file_put_contents($enable, "1\n") === false) || @file_put_contents($controller, $state['pwm'] . "\n") === false) {
+      [$restored, $restoreError] = manual_restore($state);
+      flock($lock, LOCK_UN); fclose($lock);
+      if (!$restored) json_response(manual_error('Could not apply manual PWM and restoration also failed: ' . $restoreError, manual_state_read() ?: $state));
+      json_response(['status' => 'error', 'active' => false, 'message' => 'Could not write PWM controller; original settings were restored']);
+    }
+    flock($lock, LOCK_UN); fclose($lock);
+    json_response(manual_status($state));
     break;
 
   case 'savelabel':
@@ -201,10 +352,26 @@ switch ($op) {
     $cfgpath = "/boot/config/plugins/$plugin/$file";
 
     if (is_file($cfgpath)) {
+      $old_cfg = @parse_ini_file($cfgpath);
+      $old_custom = is_array($old_cfg) ? trim($old_cfg['custom'] ?? '') : '';
+      $rc = '/etc/rc.d/rc.fanctrlplusplus';
+      if (is_executable($rc)) {
+        $output = []; $status = 0;
+        exec(escapeshellarg($rc) . ' stop 2>&1', $output, $status);
+        if ($status !== 0) json_response(['status' => 'error', 'message' => 'Could not safely stop fan control; manual PWM restoration failed. Nothing was deleted.']);
+      }
       unlink($cfgpath);
+      OrderManager::remove($file);
+      if (valid_history_name($old_custom)) {
+        foreach (['history', 'temp', 'rpm', 'pwm', 'status'] as $kind) {
+          @unlink("/var/tmp/$plugin/{$kind}_{$plugin}_{$old_custom}" . ($kind === 'history' ? '.csv' : ''));
+        }
+        @unlink("/var/tmp/$plugin/.history_compact_{$old_custom}");
+      }
+      if (is_executable($rc)) exec(escapeshellarg($rc) . ' start');
+    } else {
+      OrderManager::remove($file);
     }
-
-    OrderManager::remove($file);
 
     json_response(['status' => 'ok', 'message' => "Deleted $file"]);
     break;
@@ -292,7 +459,11 @@ switch ($op) {
     break;
   
   case 'stop':
-    shell_exec("/etc/rc.d/rc.fanctrlplusplus stop");
+    $output = []; $status = 0;
+    exec('/etc/rc.d/rc.fanctrlplusplus stop 2>&1', $output, $status);
+    if ($status !== 0) {
+      json_response(['status' => 'error', 'message' => 'Could not stop fan control because manual PWM restoration failed']);
+    }
     json_response(['status' => 'stopped']);
     break;
 

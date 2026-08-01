@@ -7,13 +7,15 @@
 <!ENTITY pluginURL "https://raw.githubusercontent.com/willdollman/fanctrl/main/unraid/fanctrlplusplus.plg">
 <!ENTITY source "/boot/config/plugins/&name;">
 <!ENTITY txz "&source;/&name;-&version;.txz">
-<!ENTITY MD5 "0794eb8f9d7ca2b8c6e2b149324d4f3b">
+<!ENTITY MD5 "373976aad23b55e1cc40e328ba330afd">
 ]>
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" min="6.9.0">
 <ICON>/usr/local/emhttp/plugins/fanctrlplusplus/images/fanctrlplus.png</ICON>
 <CHANGES>
 ###2.0.0
 - Initial public FanCtrl PlusPlus release.
+- Added one-hour transient temperature, RPM, and PWM history with CSV export.
+- Added safe 10–100% manual PWM setup tests with explicit stop and a 10-minute fail-safe.
 </CHANGES>
 <FILE Run="/bin/bash">
 <INLINE>
@@ -29,10 +31,13 @@ md5=$(md5sum &txz; 2>/dev/null | awk '{print $1}')
 <FILE Run="/bin/bash" Method="remove">
 <INLINE>
 #!/bin/bash
-/etc/rc.d/rc.fanctrlplusplus stop 2>/dev/null || true
+if ! /etc/rc.d/rc.fanctrlplusplus stop; then
+  echo "Cannot uninstall: manual PWM restoration failed; plugin retained." >&2
+  exit 1
+fi
 pkill -f '/usr/local/emhttp/plugins/fanctrlplusplus/scripts/array_monitor.sh' 2>/dev/null || true
 rm -rf /usr/local/emhttp/plugins/fanctrlplusplus /boot/config/plugins/fanctrlplusplus /var/tmp/fanctrlplusplus
-rm -f /etc/rc.d/rc.fanctrlplusplus /var/run/fanctrlplusplus.user_stopped /var/run/fanctrlplusplus_*.pid
+rm -f /etc/rc.d/rc.fanctrlplusplus /var/run/fanctrlplusplus.user_stopped /var/run/fanctrlplusplus_history.lock /var/run/fanctrlplusplus_manual.lock /var/run/fanctrlplusplus_*.pid
 echo "FanCtrl PlusPlus has been removed. Reboot before enabling another fan controller."
 </INLINE>
 </FILE>

@@ -15,7 +15,7 @@ for path in css fonts icons images include js FanctrlPlusPlusDashboard.php Fanct
   cp -a "$root/$path" "$dest/"
 done
 mkdir "$dest/scripts"
-for script in array_monitor.sh fanctrl_algo.sh fanctrl_sensors.sh fanctrlplusplus_dashboard_update.sh fanctrlplusplus_loop.sh fanctrlplusplus_refresh_single.sh rc.fanctrlplusplus; do
+for script in array_monitor.sh fanctrl_algo.sh fanctrl_sensors.sh fanctrl_manual_override.sh fanctrlplusplus_dashboard_update.sh fanctrlplusplus_loop.sh fanctrlplusplus_refresh_single.sh rc.fanctrlplusplus; do
   cp -a "$root/scripts/$script" "$dest/scripts/"
 done
 printf '%s\n' "$version" > "$dest/VERSION"
@@ -25,8 +25,22 @@ src=/usr/local/emhttp/plugins/fanctrlplusplus/scripts/rc.fanctrlplusplus
 dst=/etc/rc.d/rc.fanctrlplusplus
 ln -sf "$src" "$dst"
 mkdir -p /boot/config/plugins/fanctrlplusplus /var/tmp/fanctrlplusplus
-rm -f /var/tmp/fanctrlplusplus/*
-"$dst" restart
+if ! "$dst" stop; then
+  echo "Cannot install: manual PWM restoration failed; existing state retained." >&2
+  exit 1
+fi
+monitor=/usr/local/emhttp/plugins/fanctrlplusplus/scripts/array_monitor.sh
+pkill -f "$monitor" 2>/dev/null || true
+for _ in {1..20}; do
+  pgrep -f "$monitor" >/dev/null || break
+  sleep 0.1
+done
+if pgrep -f "$monitor" >/dev/null; then
+  echo "Cannot install: previous array monitor did not stop." >&2
+  exit 1
+fi
+find /var/tmp/fanctrlplusplus -mindepth 1 -maxdepth 1 -delete
+"$dst" start
 EOF
 chmod 755 "$stage/install/doinst.sh"
 find "$stage" -print0 | xargs -0 touch -h -d '@0'
