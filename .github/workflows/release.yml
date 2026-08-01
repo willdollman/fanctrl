@@ -45,6 +45,7 @@ jobs:
           scripts/build-package.sh "$VERSION" dist
           md5=$(md5sum "dist/fanctrlplusplus-$VERSION.txz" | awk '{print $1}')
           sed -i -E "s/(<!ENTITY version \")[^\"]+/\1$VERSION/; s/(<!ENTITY MD5 \")[^\"]+/\1$md5/" unraid/fanctrlplusplus.plg
+          python3 -c 'import xml.etree.ElementTree as ET; ET.parse("unraid/fanctrlplusplus.plg")'
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add unraid/fanctrlplusplus.plg

@@ -32,7 +32,7 @@ md5=$(md5sum &txz; 2>/dev/null | awk '{print $1}')
 <INLINE>
 #!/bin/bash
 if ! /etc/rc.d/rc.fanctrlplusplus stop; then
-  echo "Cannot uninstall: manual PWM restoration failed; plugin retained." >&2
+  echo "Cannot uninstall: manual PWM restoration failed; plugin retained." > /dev/stderr
   exit 1
 fi
 pkill -f '/usr/local/emhttp/plugins/fanctrlplusplus/scripts/array_monitor.sh' 2>/dev/null || true
