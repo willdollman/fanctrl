@@ -178,6 +178,30 @@ function migrate_cfg_and_labels(string $plugin): void {
 // END: Migrate hwmonX (cfg+labels)
 // ================================
 
+// List ALL hwmon temperature inputs (not just CPU): path => display label.
+// Used by the multi-source UI so any sensor can drive a fan.
+function list_temp_sensors(): array {
+  $out = [];
+  foreach (glob(fcp_sys_root() . "/sys/class/hwmon/hwmon*") as $dir) {
+    $chip = is_file("$dir/name") ? trim(@file_get_contents("$dir/name")) : basename($dir);
+    foreach (glob("$dir/temp[0-9]*_input") as $input) {
+      $raw = trim(@file_get_contents($input));
+      if (!is_numeric($raw)) continue;
+      $c = intval($raw) / 1000;
+      if ($c <= 0 || $c > 150) continue;   // skip disconnected/bogus sensors
+      $labelFile = str_replace('_input', '_label', $input);
+      $label = is_file($labelFile) ? trim(@file_get_contents($labelFile)) : '';
+      if ($label === '') {
+        preg_match('#/temp(\d+)_input$#', $input, $m);
+        $label = 'temp' . ($m[1] ?? '?');
+      }
+      $out[realpath($input) ?: $input] = sprintf('%s — %s (%.0f°C)', $chip, $label, $c);
+    }
+  }
+  natcasesort($out);
+  return $out;
+}
+
 function list_pwm() {
   $out = [];
   exec("find " . escapeshellarg(fcp_sys_root() . "/sys/devices") . " -type f -iname 'pwm[0-9]' -exec dirname \"{}\" + | uniq", $chips);
@@ -317,7 +341,7 @@ function detect_cpu_sensors(): array {
 
   // 映射 /dev/nvmeXp1 → pool 名（通过 zpool list -v）
   $dev_to_pool = [];
-  $zpool = shell_exec("zpool list -v 2>/dev/null");
+  $zpool = shell_exec("zpool list -v 2>/dev/null") ?: '';
   $current_pool = '';
   foreach (explode("\n", $zpool) as $line) {
     if (preg_match('/^(\S+)\s+\d/', $line, $m)) {

@@ -1,4 +1,8 @@
 <?php
+// Card renderer for the FanCtrl Plus v2 UI.
+// Each card is self-contained: it saves independently (no shared form),
+// so fields are identified by class, not by indexed names.
+
 $label_file = "/boot/config/plugins/fanctrlplus/pwm_labels.cfg";
 $pwm_labels = [];
 if (is_file($label_file)) {
@@ -9,333 +13,228 @@ if (is_file($label_file)) {
   }
 }
 
-function render_fan_block($cfg, $i, $pwms, $disks, $pwm_labels, $cpu_sensors) {
-  // PWM fallback（如果值为空，则默认 fallback 为 40% 和 100%）
-  $pwm_raw = isset($cfg['pwm']) && is_numeric($cfg['pwm']) ? $cfg['pwm'] : 102;
-  $max_raw = isset($cfg['max']) && is_numeric($cfg['max']) ? $cfg['max'] : 255;
+// Normalize a cfg into a list of sources:
+//   [ ['type'=>'disks','disks'=>'id1,id2','low'=>38,'high'=>48],
+//     ['type'=>'temp','path'=>'/sys/...','low'=>45,'high'=>80], ... ]
+// Falls back to legacy keys (disks/low/high + cpu_*) when `sources` is absent.
+function fcp_cfg_sources(array $cfg): array {
+  $n = intval($cfg['sources'] ?? -1);
+  if (($cfg['sources'] ?? '') !== '' && $n >= 0) {
+    $out = [];
+    for ($i = 1; $i <= min($n, 8); $i++) {
+      $type = $cfg["src{$i}_type"] ?? '';
+      if ($type !== 'disks' && $type !== 'temp') continue;
+      $out[] = [
+        'type'  => $type,
+        'disks' => $cfg["src{$i}_disks"] ?? '',
+        'path'  => $cfg["src{$i}_path"] ?? '',
+        'low'   => intval($cfg["src{$i}_low"] ?? 40),
+        'high'  => intval($cfg["src{$i}_high"] ?? 60),
+      ];
+    }
+    return $out;
+  }
+  // legacy synthesis (matches scripts/fanctrl_sensors.sh configure_sources)
+  $out = [];
+  if (trim($cfg['disks'] ?? '') !== '') {
+    $out[] = ['type' => 'disks', 'disks' => $cfg['disks'], 'path' => '',
+              'low' => intval($cfg['low'] ?? 40), 'high' => intval($cfg['high'] ?? 60)];
+  }
+  if (($cfg['cpu_enable'] ?? '0') === '1' && trim($cfg['cpu_sensor'] ?? '') !== '') {
+    $lo = is_numeric($cfg['cpu_min_temp'] ?? '') ? intval($cfg['cpu_min_temp']) : 40;
+    $hi = is_numeric($cfg['cpu_max_temp'] ?? '') ? intval($cfg['cpu_max_temp']) : 70;
+    $out[] = ['type' => 'temp', 'disks' => '', 'path' => $cfg['cpu_sensor'],
+              'low' => $lo, 'high' => $hi];
+  }
+  return $out;
+}
 
-  $pwm_pct = round($pwm_raw * 100 / 255) . '%';
-  $max_pct = round($max_raw * 100 / 255) . '%';
-
-  // 温度 fallback（防止空值出现 UI 上显示为 0°C）
-  $low = isset($cfg['low']) && is_numeric($cfg['low']) ? intval($cfg['low']) : 40;
-  $high = isset($cfg['high']) && is_numeric($cfg['high']) ? intval($cfg['high']) : 60;
-
-  $idle_abs = isset($cfg['idle']) && is_numeric($cfg['idle']) ? (int)$cfg['idle'] : 0;
-  $idle_pct = round($idle_abs * 100 / 255) . '%';
-
-  // Quiet mode fallback
-  $quiet_enabled = ($cfg['quiet'] ?? '0') == '1';
-  $quiet_cap_abs = isset($cfg['quiet_cap']) && is_numeric($cfg['quiet_cap']) ? (int)$cfg['quiet_cap'] : 150;
-  $quiet_cap_pct = round($quiet_cap_abs * 100 / 255) . '%';
-
-  ob_start();
-  ?>
-  <div class="fan-block" data-index="<?=$i?>" data-file="<?=htmlspecialchars($cfg['file'])?>">
-    <input type="hidden" name="#file[<?=$i?>]" value="<?=htmlspecialchars($cfg['file'])?>" class="cfg-file">
-
-    <fieldset class="fan-fieldset">
-      <div class="fcp-fan-icon-wrap">
-        <div class="fan-svg-container fcp-abs-fill">
-          <div class="fcp-abs-fill-help"></div>
-          <svg class="fcp-fan-icon" id="fan-icon-<?=$i?>" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <linearGradient id="flameGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="5%" stop-color="#FFD700"/>
-                <stop offset="25%" stop-color="#FFA500"/>
-                <stop offset="50%" stop-color="#FF8C00"/>
-                <stop offset="75%" stop-color="#FF4500"/>
-                <stop offset="100%" stop-color="#B22222"/>
-              </linearGradient>
-            </defs>
-        
-            <g class="rotor">
-              <!-- fan blades -->
-              <path fill="url(#flameGradient)" d="M176.713,229.639c5.603-16.892,16.465-31.389,30.628-41.571c-14.778-34.253-22.268-74.165-20.636-112.788 c0.217-5.095-4.279-13.455-15.648-8.54c-22.522,9.728-42.142,24.48-59.949,40.872c-17.008,15.667-20.853,40.637-7.96,56.168 C124.507,189.491,149.096,213.274,176.713,229.639z"/>
-              <path fill="url(#flameGradient)" d="M290.516,179.908c22.286-29.938,53.094-56.375,87.366-74.264c4.534-2.367,9.52-10.436-0.435-17.843 c-19.674-14.634-42.268-24.253-65.352-31.47c-22.086-6.909-45.623,2.249-52.623,21.198c-11.605,31.334-19.892,64.536-20.254,96.632 C256.644,170.561,274.614,172.728,290.516,179.908z"/>
-              <path fill="url(#flameGradient)" d="M412.281,169.754c-32.949,5.63-65.842,15.041-93.822,30.772c11.841,13.3,18.949,29.956,20.69,47.319 c37.064,4.324,75.362,17.798,107.983,38.524c4.316,2.738,13.799,3.029,15.232-9.302c2.847-24.354-0.108-48.724-5.403-72.334 C451.884,182.157,432.191,166.345,412.281,169.754z"/>
-              <path fill="url(#flameGradient)" d="M335.287,282.361c-5.603,16.881-16.464,31.38-30.627,41.56c14.779,34.254,22.267,74.165,20.635,112.789 c-0.217,5.095,4.28,13.455,15.667,8.54c22.504-9.729,42.142-24.48,59.93-40.872c17.008-15.667,20.853-40.637,7.96-56.168 C387.511,322.508,362.904,298.717,335.287,282.361z"/>
-              <path fill="url(#flameGradient)" d="M221.501,332.091c-22.267,29.93-53.075,56.367-87.348,74.264c-4.533,2.358-9.519,10.427,0.435,17.834 c19.675,14.634,42.269,24.253,65.352,31.471c22.086,6.908,45.623-2.249,52.623-21.198c11.605-31.334,19.892-64.527,20.254-96.632 C255.392,341.43,237.404,339.263,221.501,332.091z"/>
-              <path fill="url(#flameGradient)" d="M172.85,264.146c-37.064-4.326-75.362-17.798-107.982-38.525c-4.316-2.738-13.8-3.028-15.233,9.303 c-2.846,24.352,0.109,48.724,5.422,72.333c5.059,22.576,24.752,38.388,44.663,34.979c32.948-5.631,65.842-15.042,93.82-30.772 C181.699,298.164,174.591,281.509,172.85,264.146z"/>
-            </g>
-        
-            <!-- fan hub -->
-            <path class="hub" fill="var(--hub-color)" d="M255.991,195.503c-33.402,0-60.475,27.091-60.475,60.492c0,33.411,27.073,60.493,60.475,60.493 c33.419,0,60.51-27.082,60.51-60.493C316.502,222.594,289.411,195.503,255.991,195.503z"/>
-        
-            <!-- frame -->
-            <path class="frame" fill="var(--frame-color)" d="M463.017,0H49.001C21.928,0,0.005,21.932,0.005,48.987v414.016C0.005,490.059,21.928,512,49.001,512h414.016 c27.055,0,48.978-21.941,48.978-48.996V48.987C511.995,21.932,490.073,0,463.017,0z M463.017,31.706 c9.539,0,17.281,7.743,17.281,17.282c0,9.547-7.742,17.28-17.281,17.28c-9.556,0-17.299-7.734-17.299-17.28 C445.718,39.448,453.461,31.706,463.017,31.706z M49.001,31.706c9.538,0,17.281,7.743,17.281,17.282 c0,9.556-7.743,17.28-17.281,17.28c-9.556,0-17.299-7.724-17.299-17.28C31.702,39.448,39.445,31.706,49.001,31.706z M48.983,480.284c-9.538,0-17.281-7.734-17.281-17.281s7.743-17.281,17.281-17.281c9.556,0,17.299,7.734,17.299,17.281 S58.539,480.284,48.983,480.284z M463.017,480.284c-9.556,0-17.299-7.734-17.299-17.281c0-9.538,7.743-17.281,17.299-17.281 c9.539,0,17.281,7.743,17.281,17.281C480.298,472.55,472.556,480.284,463.017,480.284z M255.991,489.324 c-128.855,0-233.32-104.466-233.32-233.33c0-128.854,104.466-233.319,233.32-233.319c128.873,0,233.338,104.465,233.338,233.319 C489.329,384.858,384.864,489.324,255.991,489.324z"/>
-          </svg>
-        </div>
-            <span class="drag-handle" ><i class="fa fa-reorder"></i></span>
-      </div> 
-
-      <!-- 放在每个风扇 fan-block 内部 -->
-      <div class="fan-tools fcp-fan-tools">
-        <button type="button" class="show-chart-btn" onclick="showFanChart(this)" title="Preview this fan's speed curve based on current Disk/CPU settings">
-          <i class="fa fa-line-chart" style= "color: var(--blue-800); font:"></i> Chart
-        </button>
-        <button type="button" class="delete-btn" title="Delete this fan configuration">Delete</button>
-      </div>
-
-      <table class="fcp-w-100">
-        <!-- Custom Name -->
-        <tr>
-          <td class="fcp-help-cursor" 
-              title="Enter a unique name for this fan configuration. Avoid spaces or special characters.">
-            Custom Name
-          </td>
-          <td>
-            <div>
-              <input type="text"
-                    name="custom[<?=$i?>]"
-                    class="custom-name-input"
-                    value="<?=htmlspecialchars($cfg['custom'] ?? '')?>"
-                    placeholder="Required (e.g. HDDBay)"
-                    required>
-            </div>
-          </td>
-        </tr>
-
-        <!-- Fan Control Dropdown -->
-        <tr>
-          <td class="fcp-help-cursor" title="Enable or disable this fan controller">Fan Control:</td>
-          <td>
-            <select name="service[<?=$i?>]" class="fcp-enable-select">
-              <option value="0" <?=($cfg['service'] ?? '') == '0' ? 'selected' : ''?>>Disabled</option>
-              <option value="1" <?=($cfg['service'] ?? '') == '1' ? 'selected' : ''?>>Enabled</option>
-            </select>
-          </td>
-        </tr>
-
-
-
-        <!-- PWM Controller -->
-        <tr>
-          <td class="fcp-help-cursor" title="Each fan corresponds to a PWM controller (pwm1, pwm2, etc). Select the one controlling this fan. You can use the Identify section below to locate and label each fan.">PWM Controller:</td>
-          <td>
-            <select name="controller[<?=$i?>]" class="pwm-controller">
-              <option value="">-- Select PWM Controller --</option>
-              <?php foreach ($pwms as $pwm): 
-                $label = $pwm_labels[$pwm['sensor']] ?? '';
-                $display = $pwm['chip'] . ' - ' . $pwm['name'];
-                if ($label) $display .= '（' . htmlspecialchars($label) . '）';
-              ?>
-                <option value="<?=$pwm['sensor']?>" <?=($cfg['controller'] ?? '') == $pwm['sensor'] ? 'selected' : ''?>>
-                  <?= $display ?>
-                </option>
-              <?php endforeach; ?>
-            </select>
-          </td>
-        </tr>
-
-        <!-- Fan Speed Range -->
-        <tr>
-          <td class="fcp-help-cursor" title="Set the minimum and maximum fan speed (0–100%). % will be automatically converted to PWM. Hover to see actual values.">Fan Speed Range:</td>
-          <td>
-            <div class="fcp-range-grid">
-
-              <!-- 左侧 Min -->
-              <input type="text"
-                    id="pwm_percent_input_<?=$i?>"
-                    name="pwm_percent[<?=$i?>]"
-                    inputmode="numeric"
-                    class="fcp-input-fullleft"
-                    value="<?=$pwm_pct?>"
-                    title="Minimum speed: <?=$pwm_pct?> = <?=htmlspecialchars($pwm_raw)?> PWM"
-                    placeholder="Min %">
-
-
-              <!-- 中间波浪号 -->
-              <span class="fcp-center">~</span>
-
-              <!-- 右侧 Max -->
-              <input type="text"
-                    id="max_percent_input_<?=$i?>"
-                    name="max_percent[<?=$i?>]"
-                    inputmode="numeric"
-                    class="fcp-input-fullleft"
-                    value="<?=$max_pct?>"
-                    title="Maximum speed: <?=$max_pct?> = <?=htmlspecialchars($max_raw)?> PWM"
-                    placeholder="Max %">
-            </div>
-          </td>
-        </tr>
-
-        <tr>
-          <td class="fcp-help-cursor"
-              title="Fan speed used when there is no temperature source (all HDDs are spun down and CPU monitoring is not enabled).&#10;Must be ≤ the Min value in Fan Speed Range.&#10;Default 0% = completely stopped.">
-            Fan Speed on Idle:
-          </td>
-          <td>
-            <input type="text"
-                  id="idle_percent_input_<?=$i?>"
-                  name="idle_percent[<?=$i?>]"
-                  inputmode="numeric"
-                  class="fcp-input-idle"
-                  value="<?=$idle_pct?>"
-                  title="Idle speed: <?=$idle_pct?> = <?=htmlspecialchars($idle_abs)?> PWM"
-                  placeholder="Idle %">
-          </td>
-        </tr>
-
-        <!-- Quiet Mode -->
-        <tr>
-          <td class="fcp-help-cursor"
-              title="When enabled, short heat spikes only ramp the fan up to the Quiet Ceiling. The fan is allowed above the ceiling only when high temperature is sustained for several minutes. Critical temperatures always force full speed immediately.">
-            Quiet Mode:
-          </td>
-          <td>
-            <select name="quiet[<?=$i?>]" class="fcp-enable-select">
-              <option value="0" <?=!$quiet_enabled ? 'selected' : ''?>>Disabled</option>
-              <option value="1" <?=$quiet_enabled ? 'selected' : ''?>>Enabled</option>
-            </select>
-            <input type="text"
-                  id="quiet_cap_input_<?=$i?>"
-                  name="quiet_cap_percent[<?=$i?>]"
-                  inputmode="numeric"
-                  class="fcp-input-idle"
-                  value="<?=$quiet_cap_pct?>"
-                  title="Quiet Ceiling: <?=$quiet_cap_pct?> = <?=$quiet_cap_abs?> PWM. Max fan speed for short-lived heat spikes."
-                  placeholder="Ceiling %">
-          </td>
-        </tr>
-
-        <!-- Interval -->
-        <tr>
-          <td class="fcp-help-cursor" title="Check disk temperatures every X minutes (SMART polling). CPU temperature and fan speed are updated every 5 seconds regardless.">Interval:</td>
-          <td>
-            <input type="text"
-                  id="interval_input_<?=$i?>"
-                  name="interval[<?=$i?>]"
-                  class="interval-input fcp-interval-input" 
-                  inputmode="numeric"
-                  value="<?=htmlspecialchars(($cfg['interval'] ?? '') . ' min')?>"
-                  placeholder="Recommended: 1–5 min">
-
-            <span class="fanctrlplus-interval-refresh fcp-runnow"
-                  title="Manual Run: Read current temperature and set fan speed immediately"
-                  data-label="<?=htmlspecialchars($cfg['custom'] ?? '')?>">
-              <span class="fa fa-refresh fcp-fs-13"></span> Run Now
-            </span>
-          </td>
-        </tr>
-
-        <tr><td colspan="2" class="subhead">Disk Temperature Settings</td></tr>
-
-        <!-- Include Disk(s) -->
-        <tr>
-          <td class="fcp-help-cursor" title="Select disks, NVMe drives, or other block devices to monitor for this fan. If you only want to monitor CPU temperature for this fan, leave all disks unchecked.">Include Disk(s):</td>
-          <td>
-            <select class="disk-select fcp-w-300" name="disks[<?=$i?>][]" multiple>
-              <?php
-              $selected = explode(',', $cfg['disks'] ?? '');
-              foreach ($disks as $group => $entries):
-              ?>
-                <optgroup label="<?=htmlspecialchars($group)?>">
-                  <?php foreach ($entries as $disk):
-                    $sel = in_array($disk['id'], $selected) ? 'selected' : '';
-                  ?>
-                    <option value="<?=$disk['id']?>" <?=$sel?> title="<?=$disk['id']?>&#10;<?=$disk['dev']?>"><?=htmlspecialchars($disk['label'])?></option>
-                  <?php endforeach; ?>
-                </optgroup>
-              <?php endforeach; ?>
-            </select>
-          </td>
-        </tr>
-
-        <!-- Disk Temperature Range -->
-        <tr>
-          <td class="fcp-help-cursor" title="Fan runs at minimum speed at or below Low Temp, and maximum speed at or above High Temp. See chart for details.">Disk Temperature Range:</td>
-          <td>
-            <div class="fcp-range-grid">
-
-              <!-- 左侧 Low Temp -->
-              <input type="text"
-                    id="low_temp_input_<?=$i?>"
-                    name="low[<?=$i?>]"
-                    class="low-temp-input fcp-input-fullleft"
-                    inputmode="numeric"
-                    value="<?=$low?>°C"
-                    title="Low Temp: <?=intval($cfg['low'] ?? 40)?>°C"
-                    placeholder="Low °C">
-
-              <!-- 中间波浪号 -->
-              <span class="fcp-center">~</span>
-
-              <!-- 右侧 High Temp -->
-              <input type="text"
-                    id="high_temp_input_<?=$i?>"
-                    name="high[<?=$i?>]"
-                    class="high-temp-input fcp-input-fullleft"
-                    inputmode="numeric"
-                    value="<?=$high?>°C"
-                    title="High Temp: <?=intval($cfg['high'] ?? 60)?>°C"
-                    placeholder="High °C">
-
-            </div>
-          </td>
-        </tr>
-
-        <tr><td colspan="2" class="subhead">CPU Temperature Settings</td></tr>
-
-        <!-- CPU Temp Monitoring Dropdown -->
-        <tr>
-          <td class="fcp-help-cursor" title="Enable or disable monitoring CPU temperature for this fan.">CPU Temp Monitor:</td>
-          <td>
-            <select id="cpu-enable-<?=$i?>" name="cpu_enable[<?=$i?>]" class="fcp-enable-select" onchange="handleCpuEnableChange(this, <?=$i?>);">
-              <option value="0" <?=($cfg['cpu_enable'] ?? '') != '1' ? 'selected' : ''?>>Disabled</option>
-              <option value="1" <?=($cfg['cpu_enable'] ?? '') == '1' ? 'selected' : ''?>>Enabled</option>
-            </select>
-          </td>
-        </tr>
-
-        <!-- CPU Sensor -->
-        <tr class="cpu-control cpu-control-<?=$i?>">
-          <td class="cpu-label fcp-help-cursor" title="Automatically selected the most reliable CPU temperature sensor. Change only if necessary.">CPU Sensor:</td>
-          <td>
-            <select name="cpu_sensor[<?=$i?>]" class="cpu-input fcp-w-300" <?=($cfg['cpu_enable'] ?? '') != '1' ? 'disabled' : ''?>>
-              <?php foreach ($cpu_sensors as $path => $label): ?>
-                <option value="<?=htmlspecialchars($path)?>" <?=($cfg['cpu_sensor'] ?? '') == $path ? 'selected' : ''?>><?=htmlspecialchars($label)?></option>
-              <?php endforeach; ?>
-            </select>
-          </td>
-        </tr>
-
-        <!-- CPU Temp Range -->
-        <tr class="cpu-control cpu-control-<?=$i?>">
-          <td class="cpu-label fcp-help-cursor" title="Fan runs at minimum speed at or below Low Temp, and maximum speed at or above High Temp. See chart for details.">CPU Temperature Range:</td>
-          <td>
-            <div class="fcp-range-grid">
-              <input type="text"
-                    id="cpu_low_temp_input_<?=$i?>"
-                    name="cpu_min_temp[<?=$i?>]"
-                    class="cpu-input fcp-input-fullleft"
-                    inputmode="numeric"
-                    value="<?=htmlspecialchars(($cfg['cpu_min_temp'] ?? '') . '°C')?>"
-                    title="Low Temp: <?=intval($cfg['cpu_min_temp'] ?? 50)?>°C"
-                    placeholder="Low °C"
-                    <?=($cfg['cpu_enable'] ?? '') != '1' ? 'disabled' : ''?>>
-
-              <span class="fcp-center">~</span>
-
-              <input type="text"
-                    id="cpu_high_temp_input_<?=$i?>"
-                    name="cpu_max_temp[<?=$i?>]"
-                    class="cpu-input fcp-input-fullleft"
-                    inputmode="numeric"
-                    value="<?=htmlspecialchars(($cfg['cpu_max_temp'] ?? '') . '°C')?>"
-                    title="High Temp: <?=intval($cfg['cpu_max_temp'] ?? 75)?>°C"
-                    placeholder="High °C"
-                    <?=($cfg['cpu_enable'] ?? '') != '1' ? 'disabled' : ''?>>
-            </div>
-          </td>
-        </tr>
-      </table>
-    </fieldset>
+function fcp_render_disk_menu(array $disk_groups, array $selected): string {
+  ob_start(); ?>
+  <div class="fcp2-diskmenu">
+    <?php foreach ($disk_groups as $group => $entries): ?>
+      <div class="grp"><?= htmlspecialchars($group) ?></div>
+      <?php foreach ($entries as $d): ?>
+        <label title="<?= htmlspecialchars($d['title']) ?>">
+          <input type="checkbox" class="f-src-disk" value="<?= htmlspecialchars($d['id']) ?>"
+                 <?= in_array($d['id'], $selected, true) ? 'checked' : '' ?>>
+          <span><?= htmlspecialchars($d['label']) ?></span>
+        </label>
+      <?php endforeach; ?>
+    <?php endforeach; ?>
+    <?php if (empty($disk_groups)): ?><div class="grp">No disks found</div><?php endif; ?>
   </div>
-  <?php
-  $html = ob_get_contents();
-  ob_end_clean();
+  <?php return ob_get_clean();
+}
 
-  return $html;
+function fcp_render_source(array $src, array $disk_groups, array $temp_sensors): string {
+  $low = $src['low']; $high = $src['high'];
+  ob_start();
+  if ($src['type'] === 'disks'):
+    $selected = array_filter(array_map('trim', explode(',', $src['disks'])));
+    $count = count($selected); ?>
+  <div class="fcp2-src" data-type="disks">
+    <div class="fcp2-srchead">
+      <span class="fcp2-srckind disks">Disks</span>
+      <details class="fcp2-disksel sel">
+        <summary class="f-disk-summary"><?= $count ?> disk<?= $count == 1 ? '' : 's' ?> selected</summary>
+        <?= fcp_render_disk_menu($disk_groups, $selected) ?>
+      </details>
+      <button type="button" class="rm" title="Remove source">×</button>
+    </div>
+    <div class="fcp2-srcrange">
+      <span class="lbl">Min speed at</span>
+      <span class="fcp2-num"><input type="number" class="f-src-low" value="<?= $low ?>" min="0" max="99" required><span class="unit">°C</span></span>
+      <span class="arrow">→ max at</span>
+      <span class="fcp2-num"><input type="number" class="f-src-high" value="<?= $high ?>" min="1" max="100" required><span class="unit">°C</span></span>
+    </div>
+  </div>
+  <?php else: ?>
+  <div class="fcp2-src" data-type="temp">
+    <div class="fcp2-srchead">
+      <span class="fcp2-srckind temp">Sensor</span>
+      <select class="f-src-path sel">
+        <?php if ($src['path'] !== '' && !isset($temp_sensors[$src['path']])): ?>
+          <option value="<?= htmlspecialchars($src['path']) ?>" selected>
+            <?= htmlspecialchars($src['path']) ?> (not found)
+          </option>
+        <?php endif; ?>
+        <?php foreach ($temp_sensors as $path => $label): ?>
+          <option value="<?= htmlspecialchars($path) ?>" <?= $src['path'] === $path ? 'selected' : '' ?>>
+            <?= htmlspecialchars($label) ?>
+          </option>
+        <?php endforeach; ?>
+      </select>
+      <button type="button" class="rm" title="Remove source">×</button>
+    </div>
+    <div class="fcp2-srcrange">
+      <span class="lbl">Min speed at</span>
+      <span class="fcp2-num"><input type="number" class="f-src-low" value="<?= $low ?>" min="0" max="119" required><span class="unit">°C</span></span>
+      <span class="arrow">→ max at</span>
+      <span class="fcp2-num"><input type="number" class="f-src-high" value="<?= $high ?>" min="1" max="120" required><span class="unit">°C</span></span>
+    </div>
+  </div>
+  <?php endif;
+  return ob_get_clean();
+}
+
+function render_fan_card(array $cfg, array $pwms, array $disk_groups,
+                         array $temp_sensors, array $pwm_labels): string {
+  $file    = $cfg['file'];
+  $name    = $cfg['custom'] ?? '';
+  $enabled = ($cfg['service'] ?? '0') === '1';
+  $minPct  = (int)round(intval($cfg['pwm'] ?? 102) * 100 / 255);
+  $maxPct  = (int)round(intval($cfg['max'] ?? 255) * 100 / 255);
+  $idlePct = (int)round(intval($cfg['idle'] ?? 0) * 100 / 255);
+  $quiet   = ($cfg['quiet'] ?? '0') === '1';
+  $capPct  = (int)round(intval($cfg['quiet_cap'] ?? 150) * 100 / 255);
+  $interval = max(1, intval($cfg['interval'] ?? 2));
+  $syslog  = ($cfg['syslog'] ?? '1') === '1';
+  $sources = fcp_cfg_sources($cfg);
+
+  ob_start(); ?>
+<div class="fcp2-card <?= $enabled ? '' : 'is-disabled' ?>" data-file="<?= htmlspecialchars($file) ?>">
+  <div class="fcp2-cardhead">
+    <div class="fcp2-namewrap">
+      <input type="text" class="fcp2-name f-custom" value="<?= htmlspecialchars($name) ?>"
+             placeholder="Fan name (e.g. HDD_Bay)" pattern="[A-Za-z0-9_]+" required
+             title="Letters, numbers and underscores only">
+      <div class="fcp2-outrow">
+        <select class="f-controller" required>
+          <option value="">— Select PWM output —</option>
+          <?php foreach ($pwms as $pwm):
+            $display = $pwm['chip'] . ' · ' . $pwm['name'];
+            $lbl = $pwm_labels[$pwm['sensor']] ?? '';
+            if ($lbl) $display .= " — " . $lbl; ?>
+            <option value="<?= htmlspecialchars($pwm['sensor']) ?>"
+              <?= ($cfg['controller'] ?? '') === $pwm['sensor'] ? 'selected' : '' ?>>
+              <?= htmlspecialchars($display) ?>
+            </option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+    </div>
+    <div class="fcp2-live">
+      <div class="rpm"><span class="f-live-rpm">–</span> <small>RPM</small></div>
+      <div class="now f-live-now">–</div>
+    </div>
+    <label class="tgl" title="Enable or disable this fan controller">
+      <input type="checkbox" class="f-service" <?= $enabled ? 'checked' : '' ?>>
+      <span class="tr"></span>
+    </label>
+  </div>
+
+  <div class="fcp2-cardbody">
+    <div class="fcp2-sect">
+      <div class="fcp2-secthead">Response curve <span class="spacer"></span>
+        <span class="f-curve-legend" style="font-weight:400;text-transform:none;letter-spacing:0"></span>
+      </div>
+      <svg class="fcp2-curve f-curve" viewBox="0 0 420 130" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+
+    <div class="fcp2-sect">
+      <div class="fcp2-secthead">Temperature sources</div>
+      <div class="f-sources">
+        <?php foreach ($sources as $src) echo fcp_render_source($src, $disk_groups, $temp_sensors); ?>
+      </div>
+      <div class="fcp2-addsrc">
+        <button type="button" class="btn f-add-disks">+ Disks</button>
+        <button type="button" class="btn f-add-temp">+ Sensor</button>
+      </div>
+      <p class="fcp2-help">Each source maps its temperature range onto the fan speed range below.
+        The fan follows whichever source demands the most.</p>
+    </div>
+
+    <div class="fcp2-sect">
+      <div class="fcp2-secthead">Fan speed</div>
+      <div class="fcp2-sliderrow"><label>Min</label>
+        <input type="range" class="f-min-r" min="0" max="100" value="<?= $minPct ?>">
+        <span class="fcp2-num"><input type="number" class="f-min" min="0" max="100" value="<?= $minPct ?>" required><span class="unit">%</span></span>
+      </div>
+      <div class="fcp2-sliderrow"><label>Max</label>
+        <input type="range" class="f-max-r" min="0" max="100" value="<?= $maxPct ?>">
+        <span class="fcp2-num"><input type="number" class="f-max" min="0" max="100" value="<?= $maxPct ?>" required><span class="unit">%</span></span>
+      </div>
+      <div class="fcp2-sliderrow" title="Speed when no temperature source has data (e.g. all disks spun down)">
+        <label>Idle</label>
+        <input type="range" class="f-idle-r" min="0" max="100" value="<?= $idlePct ?>">
+        <span class="fcp2-num"><input type="number" class="f-idle" min="0" max="100" value="<?= $idlePct ?>" required><span class="unit">%</span></span>
+      </div>
+    </div>
+
+    <div class="fcp2-sect">
+      <div class="fcp2-secthead">Quiet mode <span class="spacer"></span>
+        <label class="tgl"><input type="checkbox" class="f-quiet" <?= $quiet ? 'checked' : '' ?>><span class="tr"></span></label>
+      </div>
+      <div class="fcp2-quietbody f-quietbody" <?= $quiet ? '' : 'hidden' ?>>
+        <div class="fcp2-sliderrow"><label>Ceiling</label>
+          <input type="range" class="f-cap-r" min="0" max="100" value="<?= $capPct ?>">
+          <span class="fcp2-num"><input type="number" class="f-cap" min="0" max="100" value="<?= $capPct ?>" required><span class="unit">%</span></span>
+        </div>
+        <p class="fcp2-help">Short heat spikes stay at or below the ceiling. Sustained heat
+          (several minutes) unlocks the full range. Critical temperatures always force full speed.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="fcp2-cardfoot">
+    <span class="meta" title="How often disk (SMART) temperatures are polled. Sensors and the fan itself update every 5 seconds.">
+      SMART poll <input type="number" class="f-interval" min="1" max="60" value="<?= $interval ?>" required> min
+    </span>
+    <span class="meta" title="Log fan speed changes to syslog">
+      Syslog <label class="tgl"><input type="checkbox" class="f-syslog" <?= $syslog ? 'checked' : '' ?>><span class="tr"></span></label>
+    </span>
+    <span class="spacer"></span>
+    <button type="button" class="btn-link f-runnow">Run now</button>
+    <button type="button" class="btn-link danger f-delete">Delete</button>
+  </div>
+
+  <div class="fcp2-applybar">
+    <button type="button" class="btn btn-accent f-apply">Apply</button>
+    <button type="button" class="btn f-revert">Revert</button>
+    <span class="err f-err"></span>
+  </div>
+</div>
+<?php
+  return ob_get_clean();
 }

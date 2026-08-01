@@ -145,11 +145,12 @@ switch ($op) {
     idle="0"
     quiet="0"
     quiet_cap="150"
+    interval="2"
+    syslog="1"
+    sources="0"
+    disks=""
     low="40"
     high="60"
-    interval="2"
-    disks=""
-    syslog="1"
     cpu_enable="0"
     cpu_sensor=""
     cpu_min_temp=""
@@ -161,14 +162,12 @@ switch ($op) {
     $cfg = parse_ini_file($temp_file);
     $cfg['file'] = basename($temp_file);
 
-    // ✅ 页面传来的 index 决定 <input name="x[INDEX]"> 的值
-    $page_index = intval($_REQUEST['index'] ?? 99);
     $pwms = list_pwm();
-    $disks = list_valid_disks_by_id();
-    $cpu_sensors = detect_cpu_sensors();
+    $disk_groups = list_valid_disks_by_id();
+    $temp_sensors = list_temp_sensors();
 
     header('Content-Type: text/html; charset=utf-8');
-    echo render_fan_block($cfg, $page_index, $pwms, $disks, $pwm_labels, $cpu_sensors); 
+    echo render_fan_card($cfg, $pwms, $disk_groups, $temp_sensors, $pwm_labels);
     exit;
 
   case 'setsyslog':

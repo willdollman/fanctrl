@@ -1,257 +1,182 @@
 <?php
-ob_start(); // 开启缓冲，防止意外输出破坏 JSON
+// FanCtrl Plus v2 save handler: saves ONE fan per request.
+// All validation happens before anything is written; the cfg is written
+// atomically (tmp + rename); other fans' cfg files are never touched.
 
-$plugin = 'fanctrlplus';
+$plugin  = 'fanctrlplus';
+$docroot = $docroot ?? ($_SERVER['DOCUMENT_ROOT'] ?: '/usr/local/emhttp');
 $cfgpath = "/boot/config/plugins/$plugin";
-$rename_map = [];
-$used_files = [];
-$docroot = $_SERVER['DOCUMENT_ROOT'] ?: '/usr/local/emhttp';
 
-if (!is_dir($cfgpath)) {
-  mkdir($cfgpath, 0777, true);
-}
+require_once "$docroot/plugins/$plugin/include/OrderManager.php";
 
 header('Content-Type: application/json');
 
-// 校验提交数据结构
-if (!isset($_POST['#file']) || !is_array($_POST['#file'])) {
-  ob_clean();
-  echo json_encode(['status' => 'error', 'message' => 'No fan config received']);
+function fail(string $msg): void {
+  echo json_encode(['status' => 'error', 'message' => $msg]);
   exit;
 }
 
-foreach ($_POST['#file'] as $i => $file) {
-  $old_file = basename($file);
-  $controller = $_POST['controller'][$i] ?? '';
-  $custom = trim($_POST['custom'][$i] ?? '');
-  $interval = $_POST['interval'][$i] ?? '';
-  $expected_file = $plugin . '_' . $custom . '.cfg';
-  $old_path = "$cfgpath/$old_file";
-  $new_path = "$cfgpath/$expected_file";
-  
-  // ✅ 先取原始文本
-  $pwm_percent_raw = $_POST['pwm_percent'][$i] ?? '';
-  $max_percent_raw = $_POST['max_percent'][$i] ?? '';
+if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') fail('POST required');
 
-  // ✅ 清除非数字并 fallback（空值 fallback: 40% / 100%）
-  $pwm_percent = is_numeric($p = preg_replace('/[^0-9]/', '', $pwm_percent_raw)) ? intval($p) : 40;
-  $max_percent = is_numeric($m = preg_replace('/[^0-9]/', '', $max_percent_raw)) ? intval($m) : 100;
+// ---------- read + validate everything ------------------------------------
+$file = basename(trim($_POST['file'] ?? ''));
+if ($file === '' || !preg_match('/^fanctrlplus_[\w.-]+\.cfg$/', $file)) fail('Bad file name');
 
-  $pwm = round($pwm_percent * 255 / 100);
-  $max_pwm = round($max_percent * 255 / 100);
+$custom = trim($_POST['custom'] ?? '');
+if (!preg_match('/^[A-Za-z0-9_]+$/', $custom)) {
+  fail('Fan name may only contain letters, numbers, and underscores.');
+}
 
-  // ✅ 温度 fallback（°C）
-  $low_raw = $_POST['low'][$i] ?? '';
-  $high_raw = $_POST['high'][$i] ?? '';
-  $low_temp = is_numeric($l = preg_replace('/[^0-9]/', '', $low_raw)) ? intval($l) : 40;
-  $high_temp = is_numeric($h = preg_replace('/[^0-9]/', '', $high_raw)) ? intval($h) : 60;
+$controller = trim($_POST['controller'] ?? '');
+if ($controller === '') fail('Select a PWM output.');
+if (!preg_match('#^/\S+/pwm\d+$#', $controller)) fail('Invalid PWM output path.');
 
-  // ===== Fan Speed on Idle (%) → cfg: idle(0..255) =====
-  // 1) 读取 Idle 百分比（默认 0）
-  $idle_percent_raw = $_POST['idle_percent'][$i] ?? '0';
-  $idle_percent_val = preg_replace('/[^0-9]/', '', $idle_percent_raw);
-  $idle_percent     = ($idle_percent_val !== '' && is_numeric($idle_percent_val)) ? intval($idle_percent_val) : 0;
-  $idle_percent     = max(0, min(100, $idle_percent));
+$int = function (string $key, int $min, int $max, string $label) {
+  $v = trim($_POST[$key] ?? '');
+  if ($v === '' || !preg_match('/^-?\d+$/', $v)) fail("$label must be a number.");
+  $v = intval($v);
+  if ($v < $min || $v > $max) fail("$label must be between $min and $max.");
+  return $v;
+};
 
-  // 2) 已有的最小值（“Min Speed”）就是 pwm_percent
-  if ($idle_percent > $pwm_percent) {
-    ob_clean();
-    echo json_encode([
-      'status'  => 'error',
-      'message' => "Idle Speed (%) must be ≤ Min Speed (%). (Block #".($i+1).")",
-      'block'   => $i
-    ]);
-    exit;
+$min_pct  = $int('min_pct', 0, 100, 'Min speed');
+$max_pct  = $int('max_pct', 0, 100, 'Max speed');
+$idle_pct = $int('idle_pct', 0, 100, 'Idle speed');
+$cap_pct  = $int('quiet_cap_pct', 0, 100, 'Quiet ceiling');
+$interval = $int('interval', 1, 60, 'SMART poll interval');
+$service  = ($_POST['service'] ?? '0') === '1' ? '1' : '0';
+$quiet    = ($_POST['quiet'] ?? '0') === '1' ? '1' : '0';
+$syslog   = ($_POST['syslog'] ?? '0') === '1' ? '1' : '0';
+
+if ($min_pct > $max_pct)  fail('Min speed cannot exceed max speed.');
+if ($idle_pct > $min_pct) fail('Idle speed cannot exceed min speed.');
+if ($quiet === '1' && ($cap_pct < $min_pct || $cap_pct > $max_pct)) {
+  fail('Quiet ceiling must be between min and max speed.');
+}
+
+// sources
+$types = $_POST['src_type'] ?? [];
+$disks = $_POST['src_disks'] ?? [];
+$paths = $_POST['src_path'] ?? [];
+$lows  = $_POST['src_low'] ?? [];
+$highs = $_POST['src_high'] ?? [];
+if (!is_array($types)) fail('Bad sources payload.');
+if (count($types) > 8) fail('At most 8 temperature sources per fan.');
+
+$sources = [];
+foreach (array_values($types) as $i => $type) {
+  $low  = trim($lows[$i] ?? '');
+  $high = trim($highs[$i] ?? '');
+  if (!preg_match('/^\d+$/', $low) || !preg_match('/^\d+$/', $high)) {
+    fail('Source temperatures must be numbers.');
   }
-
-  // 3) 百分比 → 绝对 PWM（你的体系按 255 做基准）
-  $idle_abs = (int) round($idle_percent * 255 / 100);
-
-  // 4) 夹到 [0, $pwm]（双保险；保存层已拦，但再保一次）
-  if ($idle_abs > $pwm) $idle_abs = $pwm;
-  if ($idle_abs < 0)    $idle_abs = 0;
-
-  // ===== Quiet Mode =====
-  $quiet = ($_POST['quiet'][$i] ?? '0') === '1' ? '1' : '0';
-  $quiet_cap_raw = $_POST['quiet_cap_percent'][$i] ?? '';
-  $quiet_cap_pct = is_numeric($q = preg_replace('/[^0-9]/', '', $quiet_cap_raw)) ? intval($q) : 59;
-  $quiet_cap_pct = max(0, min(100, $quiet_cap_pct));
-  $quiet_cap = (int) round($quiet_cap_pct * 255 / 100);
-  // ceiling must sit between min and max fan speed
-  if ($quiet_cap < $pwm)     $quiet_cap = $pwm;
-  if ($quiet_cap > $max_pwm) $quiet_cap = $max_pwm;
-
-  // CPU fallback
-  $cpu_enable = $_POST['cpu_enable'][$i] ?? '0';
-  $cpu_sensor = $_POST['cpu_sensor'][$i] ?? '';
-
-  $cpu_min_raw = $_POST['cpu_min_temp'][$i] ?? '';
-  $cpu_max_raw = $_POST['cpu_max_temp'][$i] ?? '';
-
-  if ($cpu_enable === '1') {
-    $cpu_min_temp = is_numeric($cmin = preg_replace('/[^0-9]/', '', $cpu_min_raw)) ? intval($cmin) : 40;
-    $cpu_max_temp = is_numeric($cmax = preg_replace('/[^0-9]/', '', $cpu_max_raw)) ? intval($cmax) : 70;
-  } else {
-    $cpu_min_temp = '';
-    $cpu_max_temp = '';
+  $low = intval($low); $high = intval($high);
+  if ($low < 0 || $high > 120 || $low >= $high) {
+    fail("Source temperature range $low–$high°C is invalid (low must be below high).");
   }
-
-  // Custom Name 不能为空
-  if ($custom === '') {
-    ob_clean();
-    echo json_encode(['status' => 'error', 'message' => "Custom Name is required."]);
-    exit;
-  }
-
-  // 校验 Custom Name 合法性（仅允许 A-Z a-z 0-9 和 _）
-  if (!preg_match('/^[A-Za-z0-9_]+$/', $custom)) {
-    ob_clean();
-    echo json_encode(['status' => 'error', 'message' => "Custom Name can only contain letters, numbers, and underscores."]);
-    exit;
-  }
-
-  if (stripos($custom, 'temp_') !== false) {
-    ob_clean();
-    echo json_encode(['status' => 'error', 'message' => 'Custom Name cannot contain "temp_".']);
-    exit;
-  }
-
-  $syslog_val = '1'; // 默认 1（开启）
-  if (file_exists($old_path)) {
-    $lines = file($old_path, FILE_IGNORE_NEW_LINES);
-    foreach ($lines as $line) {
-      if (strpos($line, 'syslog=') === 0) {
-        $syslog_val = trim(explode('=', $line, 2)[1], "\" \t\r\n");
-        break;
-      }
+  if ($type === 'disks') {
+    $ids = array_filter(array_map('trim', explode(',', $disks[$i] ?? '')));
+    if (empty($ids)) fail('A disk source needs at least one disk selected.');
+    foreach ($ids as $id) {
+      if (!preg_match('/^[\w.:-]+$/', $id)) fail("Invalid disk id: $id");
     }
-  }
-
-  // 检查是否已有相同 custom 名称的 cfg
-  foreach (glob("$cfgpath/{$plugin}_*.cfg") as $existing) {
-    $info = parse_ini_file($existing);
-    if (isset($info['custom']) && trim($info['custom']) === $custom) {
-      // 排除自身（重命名 temp → 正式名时允许自己）
-      if (basename($existing) !== $old_file) {
-        ob_clean();
-        echo json_encode(['status' => 'error', 'message' => "Custom Name \"$custom\" is already used."]);
-        exit;
-      }
-    }
-  }
-  
-  //重命名custom name后 cfg文件名同步重命名
-  if ($old_file !== $expected_file) {
-      if (file_exists($old_path)) {
-          // detect case-only rename
-          if (strtolower($old_file) === strtolower($expected_file)) {
-              $tmp = $old_path . '.tmp';
-              rename($old_path, $tmp);
-              rename($tmp, $new_path);
-          } else {
-              rename($old_path, $new_path);
-          }
-      }
-      require_once "$docroot/plugins/$plugin/include/OrderManager.php";
-      OrderManager::replaceFileName($old_file, $expected_file);
-      $rename_map[$old_file] = $expected_file;
-      $old_file = $expected_file;
-      $old_path = $new_path;
-  }
-
-  file_put_contents($old_path, "custom=\"$custom\"\n...");
-
-  // 校验 interval 合法性（必须为正整数）
-  if (!ctype_digit($interval) || intval($interval) <= 0) {
-    ob_clean();
-    echo json_encode(['status' => 'error', 'message' => "Interval cannot be empty or 0 (recommended: 1–5 min)."]);
-    exit;
-  } 
-
-  // === 临时文件：以 custom 命名为正式文件 ===
-  if (strpos($old_file, 'temp_') !== false && !empty($controller)) {
-    $new_file = $plugin . "_$custom.cfg";
-    $rename_map[$old_file] = $new_file;
+    $sources[] = ['type' => 'disks', 'disks' => implode(',', $ids), 'path' => '',
+                  'low' => $low, 'high' => $high];
+  } elseif ($type === 'temp') {
+    $path = trim($paths[$i] ?? '');
+    if (!preg_match('#^/\S*temp\d+_input$#', $path)) fail('Invalid sensor path.');
+    $sources[] = ['type' => 'temp', 'disks' => '', 'path' => $path,
+                  'low' => $low, 'high' => $high];
   } else {
-    $new_file = $old_file;
-  }  
-
-  // 避免命名冲突
-  $basefile = pathinfo($new_file, PATHINFO_FILENAME);
-  $suffix = 1;
-  while (in_array($new_file, $used_files)) {
-    $new_file = $basefile . "_$suffix.cfg";
-    $suffix++;
-  }
-
-  $used_files[] = $new_file;
-  $filepath = "$cfgpath/$new_file";
-
-  // 拼接配置内容
-  $cfg = [
-    'custom'     => $custom,
-    'label'      => $custom,
-    'service'    => $_POST['service'][$i] ?? '0',
-    'controller' => $controller,
-    'pwm'        => $pwm,
-    'max'        => $max_pwm,
-    'idle'       => (string)$idle_abs,
-    'quiet'      => $quiet,
-    'quiet_cap'  => (string)$quiet_cap,
-    'low'        => $low_temp,
-    'high'       => $high_temp,
-    'interval'   => $_POST['interval'][$i] ?? '',
-    'disks'      => isset($_POST['disks'][$i]) ? implode(',', $_POST['disks'][$i]) : '',
-    'syslog'     => $syslog_val,
-    'cpu_enable'    => $cpu_enable,
-    'cpu_sensor'    => $cpu_sensor,
-    'cpu_min_temp'  => $cpu_min_temp,
-    'cpu_max_temp'  => $cpu_max_temp,
-  ];
-
-  $content = '';
-  foreach ($cfg as $k => $v) {
-    $v = str_replace('"', '', $v);
-    $content .= "$k=\"$v\"\n";
-  }
-
-  file_put_contents($filepath, $content, LOCK_EX);
-
-  // 删除旧临时文件
-  if ($old_file !== $new_file && is_file("$cfgpath/$old_file")) {
-    @unlink("$cfgpath/$old_file");
+    fail('Unknown source type.');
   }
 }
 
-// 删除未使用的旧 cfg 文件
-foreach (glob("$cfgpath/{$plugin}_*.cfg") as $cfgfile) {
-  $base = basename($cfgfile);
-  if (!in_array($base, $used_files)) {
-    @unlink($cfgfile);
+// unique name across the OTHER cfg files
+$new_file = "{$plugin}_{$custom}.cfg";
+foreach (glob("$cfgpath/{$plugin}_*.cfg") ?: [] as $other) {
+  if (basename($other) === $file) continue;
+  $ini = @parse_ini_file($other);
+  if ($ini && trim($ini['custom'] ?? '') === $custom) {
+    fail("A fan named \"$custom\" already exists.");
+  }
+}
+if ($new_file !== $file && is_file("$cfgpath/$new_file")) {
+  fail("A config file for \"$custom\" already exists.");
+}
+
+// ---------- build content ---------------------------------------------------
+$pwm      = (int)round($min_pct  * 255 / 100);
+$max_pwm  = (int)round($max_pct  * 255 / 100);
+$idle_pwm = (int)round($idle_pct * 255 / 100);
+$cap_pwm  = (int)round($cap_pct  * 255 / 100);
+
+// legacy mirror keys (older readers: dashboard tiles, downgrade safety)
+$legacy_disks = ''; $legacy_low = '40'; $legacy_high = '60';
+$legacy_cpu_en = '0'; $legacy_cpu_sensor = ''; $legacy_cpu_min = ''; $legacy_cpu_max = '';
+foreach ($sources as $s) {
+  if ($s['type'] === 'disks' && $legacy_disks === '') {
+    $legacy_disks = $s['disks']; $legacy_low = (string)$s['low']; $legacy_high = (string)$s['high'];
+  }
+  if ($s['type'] === 'temp' && $legacy_cpu_sensor === '') {
+    $legacy_cpu_en = '1'; $legacy_cpu_sensor = $s['path'];
+    $legacy_cpu_min = (string)$s['low']; $legacy_cpu_max = (string)$s['high'];
   }
 }
 
-// === 写入 order.cfg 排序顺序（转移至OrderManager。php）===
-require_once "$docroot/plugins/fanctrlplus/include/OrderManager.php";
+$kv = [
+  'custom'       => $custom,
+  'label'        => $custom,
+  'service'      => $service,
+  'controller'   => $controller,
+  'pwm'          => (string)$pwm,
+  'max'          => (string)$max_pwm,
+  'idle'         => (string)$idle_pwm,
+  'quiet'        => $quiet,
+  'quiet_cap'    => (string)$cap_pwm,
+  'interval'     => (string)$interval,
+  'syslog'       => $syslog,
+  'sources'      => (string)count($sources),
+];
+foreach ($sources as $i => $s) {
+  $n = $i + 1;
+  $kv["src{$n}_type"]  = $s['type'];
+  $kv["src{$n}_disks"] = $s['disks'];
+  $kv["src{$n}_path"]  = $s['path'];
+  $kv["src{$n}_low"]   = (string)$s['low'];
+  $kv["src{$n}_high"]  = (string)$s['high'];
+}
+$kv += [
+  'disks'        => $legacy_disks,
+  'low'          => $legacy_low,
+  'high'         => $legacy_high,
+  'cpu_enable'   => $legacy_cpu_en,
+  'cpu_sensor'   => $legacy_cpu_sensor,
+  'cpu_min_temp' => $legacy_cpu_min,
+  'cpu_max_temp' => $legacy_cpu_max,
+];
 
-$order_left = array_map(function($f) use ($rename_map) {
-  return $rename_map[$f] ?? $f;
-}, $_POST['order_left'] ?? []);
-
-$order_right = array_map(function($f) use ($rename_map) {
-  return $rename_map[$f] ?? $f;
-}, $_POST['order_right'] ?? []);
-
-OrderManager::writeOrder(array_values($order_left), array_values($order_right));
-
-// 重启 fanctrlplus 守护进程
-$script = "/usr/local/emhttp/plugins/$plugin/scripts/rc.fanctrlplus";
-if (is_file($script)) {
-  exec("bash $script stop > /dev/null 2>&1");
-  sleep(1);
-  exec("bash $script start > /dev/null 2>&1");
+$content = '';
+foreach ($kv as $k => $v) {
+  $content .= $k . '="' . str_replace('"', '', $v) . "\"\n";
 }
 
-ob_clean();
-echo json_encode(['status' => 'ok']);
-exit;
+// ---------- write (atomic), then rename bookkeeping ------------------------
+if (!is_file("$cfgpath/$file")) fail('Original config file not found; reload the page.');
+
+$tmp = "$cfgpath/.$new_file.tmp";
+if (file_put_contents($tmp, $content, LOCK_EX) === false) fail('Failed to write config.');
+if (!rename($tmp, "$cfgpath/$new_file")) { @unlink($tmp); fail('Failed to write config.'); }
+
+if ($new_file !== $file) {
+  @unlink("$cfgpath/$file");
+  OrderManager::replaceFileName($file, $new_file);
+}
+
+// restart the control daemon so changes take effect
+$rc = '/etc/rc.d/rc.fanctrlplus';
+if (is_executable($rc)) {
+  exec("nohup $rc restart >/dev/null 2>&1 &");
+}
+
+echo json_encode(['status' => 'ok', 'file' => $new_file]);
