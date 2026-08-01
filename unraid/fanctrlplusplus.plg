@@ -12,6 +12,16 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" min="6.9.0">
 <ICON>/usr/local/emhttp/plugins/fanctrlplusplus/images/fanctrlplus.png</ICON>
 <CHANGES>
+###0.0.6
+- Fixed the array monitor endlessly relaunching (and spamming the log) when no fans are configured or enabled.
+- Made every settings control survive Unraid page remounts, so Apply, Delete, sliders, and label saves keep working.
+- Serialized service starts so a save racing the array monitor can no longer leave duplicate workers fighting over one fan.
+- The array monitor now restarts the service when a fan worker dies, instead of only when all workers are gone.
+- The status pill now shows "No fans enabled" instead of "Stopped" before any fan is set up.
+- Uninstall no longer aborts when the rc script is missing.
+- Stale worker pid files are cleaned on start; PHP warnings can no longer corrupt API responses.
+- Hardened the delete/label/refresh API endpoints against bad file and fan names; delete failures now surface in the UI.
+
 ###0.0.5
 - Kept setup controls interactive when Unraid remounts page elements.
 
@@ -41,9 +51,18 @@ md5=$(md5sum &txz; 2>/dev/null | awk '{print $1}')
 <FILE Run="/bin/bash" Method="remove">
 <INLINE>
 #!/bin/bash
-if ! /etc/rc.d/rc.fanctrlplusplus stop; then
-  echo "Cannot uninstall: manual PWM restoration failed; plugin retained." > /dev/stderr
-  exit 1
+# Stop workers and restore PWM state; fall back to the bundled rc script if
+# the /etc/rc.d symlink is missing so workers never outlive the plugin.
+rc=/etc/rc.d/rc.fanctrlplusplus
+[ -x "$rc" ] || rc=/usr/local/emhttp/plugins/fanctrlplusplus/scripts/rc.fanctrlplusplus
+if [ -x "$rc" ]; then
+  if ! "$rc" stop; then
+    echo "Cannot uninstall: manual PWM restoration failed; plugin retained." > /dev/stderr
+    exit 1
+  fi
+else
+  pkill -f '/usr/local/emhttp/plugins/fanctrlplusplus/scripts/fanctrlplusplus_loop.sh' 2>/dev/null || true
+  pkill -f '/usr/local/emhttp/plugins/fanctrlplusplus/scripts/fanctrlplusplus_dashboard_update.sh' 2>/dev/null || true
 fi
 pkill -f '/usr/local/emhttp/plugins/fanctrlplusplus/scripts/array_monitor.sh' 2>/dev/null || true
 rm -rf /usr/local/emhttp/plugins/fanctrlplusplus /boot/config/plugins/fanctrlplusplus /var/tmp/fanctrlplusplus

@@ -216,25 +216,6 @@ function list_pwm() {
   return $out;
 }
 
-function list_valid_disks_by_id() {
-  $seen = [];
-  $groups = [];
-
-  // 映射 /dev/sdX → DiskX / Parity
-  $dev_to_diskx = [];
-  $lines = shell_exec("/usr/local/sbin/mdcmd status | grep rdevName");
-  foreach (explode("\n", $lines) as $line) {
-    if (preg_match('/rdevName\.(\d+)=(\w+)/', $line, $m)) {
-      $slot = intval($m[1]);
-      $dev  = "/dev/" . trim($m[2]);
-      $dev_to_diskx[$dev] = match (true) {
-        $slot === 0  => 'Parity',
-        $slot === 29 => 'Parity 2',
-        default      => 'Disk ' . $slot
-      };
-    }
-  }
-
 // 掃描所有 hwmon 傳感器，找出可能的 CPU 溫度路徑，並附上即時溫度與優先排序
 function detect_cpu_sensors(): array {
   $result = [];
@@ -338,6 +319,25 @@ function detect_cpu_sensors(): array {
   }
   return $final;
 }
+
+function list_valid_disks_by_id() {
+  $seen = [];
+  $groups = [];
+
+  // 映射 /dev/sdX → DiskX / Parity
+  $dev_to_diskx = [];
+  $lines = shell_exec("/usr/local/sbin/mdcmd status | grep rdevName") ?: '';
+  foreach (explode("\n", $lines) as $line) {
+    if (preg_match('/rdevName\.(\d+)=(\w+)/', $line, $m)) {
+      $slot = intval($m[1]);
+      $dev  = "/dev/" . trim($m[2]);
+      $dev_to_diskx[$dev] = match (true) {
+        $slot === 0  => 'Parity',
+        $slot === 29 => 'Parity 2',
+        default      => 'Disk ' . $slot
+      };
+    }
+  }
 
   // 映射 /dev/nvmeXp1 → pool 名（通过 zpool list -v）
   $dev_to_pool = [];

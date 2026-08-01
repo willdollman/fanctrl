@@ -17,14 +17,26 @@ wait_stopped() {
 }
 
 fanctrlplusplus.start() {
+  # 启动前执行migrate_cfg_and_labels (idempotent; kept outside the lock)
+  php -r "require_once '/usr/local/emhttp/plugins/fanctrlplusplus/include/Common.php'; migrate_cfg_and_labels('fanctrlplusplus');"
+
+  # Serialize flag handling + kill + relaunch with rc stop and with any
+  # concurrent rc start (page saves and the array monitor can overlap);
+  # otherwise two interleaved starts can leave duplicate workers per fan.
+  exec 8>"$MANUAL_OVERRIDE_LOCK" || return 1
+  flock 8 || return 1
+
+  # A watchdog-initiated start must never override a user stop.
+  if [[ ${FCP_RESPECT_USER_STOP:-0} == 1 && -e /var/run/fanctrlplusplus.user_stopped ]]; then
+    flock -u 8
+    return 0
+  fi
   # 清除用户手动 stop 标记
   rm -f /var/run/fanctrlplusplus.user_stopped
 
   pkill -f "$loop_script" 2>/dev/null
   wait_stopped "$loop_script"
-
-  # 启动前执行migrate_cfg_and_labels
-  php -r "require_once '/usr/local/emhttp/plugins/fanctrlplusplus/include/Common.php'; migrate_cfg_and_labels('fanctrlplusplus');"
+  rm -f "$pid_dir"/${plugin}_*.pid
 
   for cfg in "$cfg_path"/${plugin}_*.cfg; do
     [[ -f "$cfg" ]] || continue
@@ -39,10 +51,13 @@ fanctrlplusplus.start() {
 
     [[ -z "$custom_safe" ]] && continue
 
-    nohup "$loop_script" "$cfg" > /dev/null 2>&1 &
+    # 8>&- keeps workers from inheriting the lock fd: if this start is
+    # killed mid-launch the lock must die with it, not live on in workers.
+    nohup "$loop_script" "$cfg" > /dev/null 2>&1 8>&- &
     echo $! > "$pid_dir/${plugin}_${custom_safe}.pid"
     logger -t "$plugin" "Started [$custom_safe] from $cfg"
   done
+  flock -u 8
 
   # ✅ 确保 array_monitor.sh 已启动（若未运行）
   script="/usr/local/emhttp/plugins/fanctrlplusplus/scripts/array_monitor.sh"

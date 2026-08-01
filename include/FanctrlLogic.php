@@ -1,6 +1,7 @@
 <?php
+// Never print notices/warnings into JSON responses.
 error_reporting(E_ALL);
-ini_set('display_errors', 1);
+ini_set('display_errors', '0');
 
 $plugin  = 'fanctrlplusplus';
 $docroot = $docroot ?? $_SERVER['DOCUMENT_ROOT'] ?: '/usr/local/emhttp';
@@ -16,6 +17,9 @@ header('Content-Type: application/json');
 $op = $_GET['op'] ?? $_POST['op'] ?? '';
 
 if ($op === 'refresh_single' && !empty($_GET['custom'])) {
+  // Fan names are [A-Za-z0-9_] only; anything else could path-traverse into
+  // sourcing an arbitrary cfg file inside the refresh script.
+  if (!preg_match('/^[A-Za-z0-9_]+$/', $_GET['custom'])) exit('Invalid fan name');
   $custom = escapeshellarg($_GET['custom']);
   shell_exec("/usr/local/emhttp/plugins/fanctrlplusplus/scripts/fanctrlplusplus_refresh_single.sh $custom > /dev/null 2>&1 &");
   exit('OK');
@@ -240,16 +244,18 @@ switch ($op) {
     break;
 
   case 'savelabel':
-    $pwm = $_POST['pwm'] ?? '';
-    $label = $_POST['label'] ?? '';
+    $pwm = trim($_POST['pwm'] ?? '');
+    // Labels are one line per pwm path; embedded newlines would corrupt the
+    // file, and the key must be a pwm sysfs path so readers can parse it.
+    $label = trim(preg_replace('/[\r\n]+/', ' ', $_POST['label'] ?? ''));
 
     $label_file = "/boot/config/plugins/fanctrlplusplus/pwm_labels.cfg";
     // 读取现有label
     $lines = is_file($label_file) ? file($label_file, FILE_IGNORE_NEW_LINES) : [];
     $found = false;
 
-    if (!$pwm) {
-      json_response(['status' => 'error', 'message' => 'Missing pwm']);
+    if (!preg_match('#^/\S+/pwm\d+$#', $pwm)) {
+      json_response(['status' => 'error', 'message' => 'Invalid pwm path']);
       break;
     }
 
@@ -277,78 +283,14 @@ switch ($op) {
     json_response(['status' => 'ok', 'message' => 'Label saved']);
     break;
   
-  case 'newtemp':
-    $cfg_dir = "/boot/config/plugins/$plugin";
-
-    // 找 temp_X.cfg 文件名，不重复
-    $index_cfg = 0;
-    while (file_exists("$cfg_dir/{$plugin}_temp_$index_cfg.cfg")) {
-      $index_cfg++;
-    }
-
-    $temp_file = "$cfg_dir/{$plugin}_temp_$index_cfg.cfg";
-    file_put_contents($temp_file, <<<INI
-    custom=""
-    service="1"
-    controller=""
-    pwm="102"
-    max="255"
-    idle="0"
-    quiet="0"
-    quiet_cap="150"
-    interval="2"
-    syslog="1"
-    sources="0"
-    disks=""
-    low="40"
-    high="60"
-    cpu_enable="0"
-    cpu_sensor=""
-    cpu_min_temp=""
-    cpu_max_temp=""
-    INI
-    );
-
-    require_once "$docroot/plugins/$plugin/include/FanBlockRender.php";
-    $cfg = parse_ini_file($temp_file);
-    $cfg['file'] = basename($temp_file);
-
-    $pwms = list_pwm();
-    $disk_groups = list_valid_disks_by_id();
-    $temp_sensors = list_temp_sensors();
-
-    header('Content-Type: text/html; charset=utf-8');
-    echo render_fan_card($cfg, $pwms, $disk_groups, $temp_sensors, $pwm_labels);
-    exit;
-
-  case 'setsyslog':
-      $cfg_file = basename($_POST['cfg']);
-      $enabled = isset($_POST['enabled']) && $_POST['enabled'] == 1 ? 1 : 0;
-
-      $cfg_dir = "/boot/config/plugins/fanctrlplusplus";
-      $cfg_path = "$cfg_dir/$cfg_file";
-
-      if (file_exists($cfg_path)) {
-          $lines = file($cfg_path, FILE_IGNORE_NEW_LINES);
-          $found = false;
-          foreach ($lines as &$line) {
-              if (strpos($line, 'syslog=') === 0) {
-                  $line = 'syslog="' . $enabled . '"';
-                  $found = true;
-              }
-          }
-          if (!$found) {
-              $lines[] = 'syslog="' . $enabled . '"';
-          }
-          file_put_contents($cfg_path, implode("\n", $lines) . "\n");
-          echo json_encode(['status' => 'ok']);
-      } else {
-          echo json_encode(['status' => 'error', 'msg' => 'Config file not found']);
-      }
-      exit;
-
   case 'delete':
     $file = basename($_POST['file'] ?? '');
+    // Only fan cfg files may be deleted; without this check any file in the
+    // plugin config dir could be removed (order.cfg, pwm_labels.cfg, or the
+    // cached plugin package that Unraid reinstalls from at boot).
+    if (!preg_match('/^' . $plugin . '_[\w.-]+\.cfg$/', $file)) {
+      json_response(['status' => 'error', 'message' => 'Bad file name']);
+    }
     $cfgpath = "/boot/config/plugins/$plugin/$file";
 
     if (is_file($cfgpath)) {
@@ -377,7 +319,7 @@ switch ($op) {
     break;
 
   case 'status':
-    $pid_files = glob("/var/run/fanctrlplusplus_*.pid");
+    $pid_files = glob("/var/run/fanctrlplusplus_*.pid") ?: [];
     $running = false;
     foreach ($pid_files as $pidfile) {
       $pid = trim(@file_get_contents($pidfile));
@@ -386,102 +328,19 @@ switch ($op) {
         break;
       }
     }
-  
-    json_response(['status' => $running ? 'running' : 'stopped']);
-    break;
 
-  case 'status_all':
-    $cfg_dir = "/boot/config/plugins/$plugin";
-    $result = [];
-
-    foreach (glob("$cfg_dir/{$plugin}_*.cfg") as $file) {
-      $cfg = parse_ini_file($file);
-      $name = trim($cfg['custom'] ?? '');
-      $enabled = trim($cfg['service'] ?? '0') === '1';
-
-      // 保持和 rc.fanctrlplusplus 的一致性（自定义名 → pid 文件名）
-      $name_trimmed = trim($name);
-      $custom_safe = preg_replace('/\W+/', '_', $name_trimmed);
-      $pid_file = "/var/run/{$plugin}_{$custom_safe}.pid";
-      $running = false;
-
-      if ($enabled && file_exists($pid_file)) {
-        $pid = trim(@file_get_contents($pid_file));
-        if (is_numeric($pid) && posix_kill((int)$pid, 0)) {
-          $running = true;
-        }
-      }
-
-      if ($name !== '') {
-        $result[basename($file)] = $running ? 'running' : 'stopped';
-      }
-    }
-  
-    json_response($result);
-    break;
-
-  case 'saveorder':
-    error_log("[fanctrlplusplus] 🔥 saveorder triggered");
-
-    $order_raw = $_POST['order'] ?? [];
-
-    if (!is_array($order_raw)) {
-      error_log("[fanctrlplusplus] ⚠️ order is not array: " . print_r($order_raw, true));
-      json_response(['status' => 'error', 'message' => 'Order not array']);
+    // enabled = saved fans that should have a running worker, so the UI can
+    // distinguish "stopped" from "nothing configured yet". Uses the same
+    // name sanitizing as rc.fanctrlplusplus so counts match what launches.
+    $enabled = 0;
+    foreach (glob("$cfg_dir/{$plugin}_*.cfg") ?: [] as $file) {
+      $cfg = @parse_ini_file($file);
+      if (!is_array($cfg) || trim($cfg['service'] ?? '0') !== '1') continue;
+      $custom_safe = preg_replace('/[^A-Za-z0-9_-]/', '', $cfg['custom'] ?? '');
+      if ($custom_safe !== '') $enabled++;
     }
 
-    $output = "";
-
-    foreach (['left', 'right'] as $side) {
-      if (!isset($order_raw[$side]) || !is_array($order_raw[$side])) continue;
-
-      $valid = array_values(array_filter($order_raw[$side], function ($f) use ($cfg_dir) {
-        return is_string($f) && trim($f) !== '' && is_file("$cfg_dir/$f");
-      }));
-
-      foreach ($valid as $i => $file) {
-        $output .= "{$side}{$i}=\"$file\"\n";
-      }
-    }
-
-    if ($output !== "") {
-      file_put_contents("$cfg_dir/order.cfg", $output);
-      json_response(['status' => 'ok']);
-    } else {
-      error_log("[fanctrlplusplus] ❌ Blocked invalid saveorder: " . print_r($order_raw, true));
-      json_response(['status' => 'error', 'message' => 'Invalid order']);
-    }
-    break;
-    
-  case 'start':
-    shell_exec("/etc/rc.d/rc.fanctrlplusplus start");
-    json_response(['status' => 'started']);
-    break;
-  
-  case 'stop':
-    $output = []; $status = 0;
-    exec('/etc/rc.d/rc.fanctrlplusplus stop 2>&1', $output, $status);
-    if ($status !== 0) {
-      json_response(['status' => 'error', 'message' => 'Could not stop fan control because manual PWM restoration failed']);
-    }
-    json_response(['status' => 'stopped']);
-    break;
-
-  case 'getpwm':
-    $pwms = list_pwm();
-    $label_file = "/boot/config/plugins/fanctrlplusplus/pwm_labels.cfg";
-    $labels = [];
-    if (is_file($label_file)) {
-      foreach (file($label_file, FILE_IGNORE_NEW_LINES) as $line) {
-        if (preg_match('/^(.+?)=(.+)$/', $line, $m)) {
-          $labels[$m[1]] = $m[2];
-        }
-      }
-    }
-    foreach ($pwms as &$pwm) {
-      $pwm['label'] = $labels[$pwm['sensor']] ?? '';
-    }
-    json_response($pwms);
+    json_response(['status' => $running ? 'running' : 'stopped', 'enabled' => $enabled]);
     break;
 
   case 'read_temp_rpm':

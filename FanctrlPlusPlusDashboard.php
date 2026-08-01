@@ -11,6 +11,12 @@ $status_text = $daemon_running ? "Running" : "Stopped";
 $fans = [];
 
 if (isset($_GET['op']) && $_GET['op'] === 'refresh' && !empty($_GET['custom'])) {
+    // Same fan-name validation as FanctrlLogic.php refresh_single: the
+    // refresh script sources the named cfg file, so reject traversal.
+    if (!preg_match('/^[A-Za-z0-9_]+$/', $_GET['custom'])) {
+        echo json_encode(['ok' => 0, 'error' => 'Invalid fan name']);
+        exit;
+    }
     $custom = escapeshellarg($_GET['custom']);
     $script = "/usr/local/emhttp/plugins/fanctrlplusplus/scripts/fanctrlplusplus_refresh_single.sh $custom";
     shell_exec($script . " > /dev/null 2>&1 &");

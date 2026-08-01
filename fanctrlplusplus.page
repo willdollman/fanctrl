@@ -170,7 +170,11 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
   const SAVE = '/plugins/fanctrlplusplus/include/update.fanctrlplusplus.php';
   const $ = (el, sel) => el.querySelector(sel);
   const $$ = (el, sel) => Array.from(el.querySelectorAll(sel));
-  const historyModal = document.getElementById('fcp2-history');
+  // Unraid's newer web UI can replace mounted page elements, which silently
+  // detaches nodes captured in constants and drops their event listeners.
+  // All element lookups are therefore lazy and all events are delegated
+  // from document (capture phase) so every control keeps working.
+  const historyModal = () => document.getElementById('fcp2-history');
   let historyCharts = [];
   let historyRequest = 0;
   let manualActive = false;
@@ -190,23 +194,29 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
     historyRequest++;
     historyCharts.forEach(chart => chart.destroy());
     historyCharts = [];
-    historyModal.hidden = true;
+    historyModal().hidden = true;
   }
   async function openHistory(card) {
     const name = card.dataset.savedName;
     if (!name) { toast('Save the fan first', true); return; }
     closeHistory();
-    historyModal.hidden = false;
+    const modal = historyModal();
+    modal.hidden = false;
     document.getElementById('fcp2-history-title').textContent = `${name} — one-hour transient history`;
-    $(historyModal, '.fcp2-history-export').href = `${API}?op=export_history&custom=${encodeURIComponent(name)}`;
-    const empty = $(historyModal, '.fcp2-history-empty');
-    const charts = $(historyModal, '.fcp2-history-charts');
+    $(modal, '.fcp2-history-export').href = `${API}?op=export_history&custom=${encodeURIComponent(name)}`;
+    const empty = $(modal, '.fcp2-history-empty');
+    const charts = $(modal, '.fcp2-history-charts');
     empty.textContent = 'Loading history…'; empty.hidden = false; charts.hidden = true;
-    $(historyModal, '.fcp2-history-close').focus();
+    $(modal, '.fcp2-history-close').focus();
     const request = ++historyRequest;
     try {
       const data = await (await fetch(`${API}?op=history&custom=${encodeURIComponent(name)}`)).json();
-      if (request !== historyRequest || historyModal.hidden) return;
+      // Re-resolve the modal after the await: Unraid's UI can clone-replace
+      // DOM subtrees, leaving pre-await node references detached.
+      const modal = historyModal();
+      const empty = $(modal, '.fcp2-history-empty');
+      const charts = $(modal, '.fcp2-history-charts');
+      if (request !== historyRequest || modal.hidden) return;
       if (!data.samples || !data.samples.length) { empty.textContent = 'No history data yet.'; return; }
       const labels = data.samples.map(s => new Date(s.timestamp * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
       const common = { responsive: true, maintainAspectRatio: false, elements: { point: { radius: 0 } },
@@ -226,16 +236,16 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
     } catch (e) {
       historyCharts.forEach(chart => chart.destroy());
       historyCharts = [];
-      charts.hidden = true;
-      if (request === historyRequest && !historyModal.hidden) {
+      const modal = historyModal();
+      const empty = $(modal, '.fcp2-history-empty');
+      $(modal, '.fcp2-history-charts').hidden = true;
+      if (request === historyRequest && !modal.hidden) {
         empty.textContent = 'History could not be loaded.';
         empty.hidden = false;
       }
     }
   }
-  for (const button of $$(historyModal, '.fcp2-history-close')) button.addEventListener('click', closeHistory);
-  historyModal.addEventListener('click', e => { if (e.target === historyModal) closeHistory(); });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !historyModal.hidden) closeHistory(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !historyModal().hidden) closeHistory(); });
 
   // ------- toast -------
   let toastTimer;
@@ -254,15 +264,25 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
     const fill = max > min ? Math.max(0, Math.min(100, (value - min) * 100 / (max - min))) : 0;
     r.style.setProperty('--fill', `${fill}%`);
   }
-  function bindPair(card, rangeSel, numSel) {
-    const r = $(card, rangeSel), n = $(card, numSel);
-    if (!r || !n) return;
-    fillRange(r);
-    r.addEventListener('input', () => { n.value = r.value; fillRange(r); drawCurve(card); });
-    n.addEventListener('input', () => {
-      const v = Math.max(0, Math.min(100, parseInt(n.value, 10) || 0));
-      r.value = v; fillRange(r); drawCurve(card);
-    });
+  // range ↔ number input pairs inside a card (synced via delegated input events)
+  const RANGE_PAIRS = [
+    ['f-min-r', 'f-min'], ['f-max-r', 'f-max'],
+    ['f-idle-r', 'f-idle'], ['f-cap-r', 'f-cap'],
+  ];
+  function syncRangePair(card, target) {
+    for (const [rangeCls, numCls] of RANGE_PAIRS) {
+      if (target.classList.contains(rangeCls)) {
+        $(card, '.' + numCls).value = target.value;
+        fillRange(target); drawCurve(card);
+        return;
+      }
+      if (target.classList.contains(numCls)) {
+        const r = $(card, '.' + rangeCls);
+        r.value = Math.max(0, Math.min(100, parseInt(target.value, 10) || 0));
+        fillRange(r); drawCurve(card);
+        return;
+      }
+    }
   }
 
   // ------- payload / dirty tracking -------
@@ -377,43 +397,11 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
   }
 
   // ------- card wiring -------
+  // No listeners are attached to the card: every interaction is handled by
+  // the delegated document-level handlers below, so cards keep working even
+  // if Unraid replaces the mounted DOM nodes.
   function initCard(card) {
-    bindPair(card, '.f-min-r', '.f-min');
-    bindPair(card, '.f-max-r', '.f-max');
-    bindPair(card, '.f-idle-r', '.f-idle');
-    bindPair(card, '.f-cap-r', '.f-cap');
-
-    $(card, '.f-service').addEventListener('change', e =>
-      card.classList.toggle('is-disabled', !e.target.checked));
-    $(card, '.f-quiet').addEventListener('change', e => {
-      $(card, '.f-quietbody').hidden = !e.target.checked;
-      drawCurve(card);
-    });
-
-    $(card, '.f-add-disks').addEventListener('click', () => addSource(card, 'fcp2-tpl-disks'));
-    $(card, '.f-add-temp').addEventListener('click', () => addSource(card, 'fcp2-tpl-temp'));
-
-    $(card, '.f-apply').addEventListener('click', () => save(card));
-    $(card, '.f-revert').addEventListener('click', () => location.reload());
-    $(card, '.f-delete').addEventListener('click', () => del(card));
-    $(card, '.f-runnow').addEventListener('click', () => runNow(card));
-    $(card, '.f-history').addEventListener('click', () => openHistory(card));
-
-    card.addEventListener('input', () => { setDirty(card); });
-    card.addEventListener('change', e => {
-      const src = e.target.closest('.fcp2-src');
-      if (src && e.target.classList.contains('f-src-disk')) updateDiskSummary(src);
-      if (src) drawCurve(card);
-      setDirty(card);
-    });
-    card.addEventListener('click', e => {
-      const rm = e.target.closest('.rm');
-      if (rm) {
-        rm.closest('.fcp2-src').remove();
-        drawCurve(card); setDirty(card);
-      }
-    });
-
+    for (const r of $$(card, 'input[type="range"]')) fillRange(r);
     drawCurve(card);
     snapshot(card);
   }
@@ -463,9 +451,14 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
     const fd = new FormData();
     fd.append('op', 'delete');
     fd.append('file', card.dataset.file);
-    await fetch(API, { method: 'POST', body: fd });
-    card.remove();
-    toast(`Deleted ${name}`);
+    try {
+      const j = await (await fetch(API, { method: 'POST', body: fd })).json();
+      if (j.status !== 'ok') { toast(j.message || 'Delete failed', true); return; }
+      card.remove();
+      toast(`Deleted ${name}`);
+    } catch (e) {
+      toast('Delete failed: ' + e, true);
+    }
   }
 
   function runNow(card) {
@@ -484,22 +477,20 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
     $(card, '.f-custom').focus();
   }
 
-  document.getElementById('fcp2-applyall').addEventListener('click', async () => {
+  async function applyAll() {
     for (const card of $$(document, '.fcp2-card.is-dirty')) {
       if (!await save(card)) break;
     }
-  });
+  }
 
   // ------- outputs panel -------
-  for (const row of $$(document, '.fcp2-outrow2')) {
-    $(row, '.o-savelabel').addEventListener('click', async () => {
-      const fd = new FormData();
-      fd.append('op', 'savelabel');
-      fd.append('pwm', row.dataset.pwm);
-      fd.append('label', $(row, '.label-in').value.trim());
-      const j = await (await fetch(API, { method: 'POST', body: fd })).json();
-      toast(j.message || 'Label saved', j.status !== 'ok');
-    });
+  async function saveLabel(row) {
+    const fd = new FormData();
+    fd.append('op', 'savelabel');
+    fd.append('pwm', row.dataset.pwm);
+    fd.append('label', $(row, '.label-in').value.trim());
+    const j = await (await fetch(API, { method: 'POST', body: fd })).json();
+    toast(j.message || 'Label saved', j.status !== 'ok');
   }
 
   function manualLabel(path) {
@@ -574,30 +565,71 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
     const state = await manualRequest('manual_stop', fd);
     if (state) toast('Manual test stopped');
   }
-  // Unraid's newer web UI can replace mounted page controls. Delegating from
-  // document keeps these setup actions live when their elements are replaced.
+  // Unraid's newer web UI can replace mounted page controls. Delegating every
+  // interaction from document keeps all controls live when nodes are replaced.
   document.addEventListener('click', e => {
     if (!(e.target instanceof Element)) return;
-    if (e.target.closest('#fcp2-addfan')) addFan();
-    else if (e.target.closest('#fcp2-manual-start')) startManualTest();
-    else if (e.target.closest('.fcp2-manual-stop')) stopManualTest();
+    // page-level controls
+    if (e.target.closest('#fcp2-addfan')) return addFan();
+    if (e.target.closest('#fcp2-manual-start')) return startManualTest();
+    if (e.target.closest('.fcp2-manual-stop')) return stopManualTest();
+    if (e.target.closest('#fcp2-applyall')) return applyAll();
+    if (e.target.closest('.fcp2-history-close')) return closeHistory();
+    if (e.target === historyModal()) return closeHistory();
+    const labelRow = e.target.closest('.fcp2-outrow2');
+    if (labelRow && e.target.closest('.o-savelabel')) return saveLabel(labelRow);
+    // per-card controls
+    const card = e.target.closest('.fcp2-card');
+    if (!card) return;
+    if (e.target.closest('.f-apply')) save(card);
+    else if (e.target.closest('.f-revert')) location.reload();
+    else if (e.target.closest('.f-delete')) del(card);
+    else if (e.target.closest('.f-runnow')) runNow(card);
+    else if (e.target.closest('.f-history')) openHistory(card);
+    else if (e.target.closest('.f-add-disks')) addSource(card, 'fcp2-tpl-disks');
+    else if (e.target.closest('.f-add-temp')) addSource(card, 'fcp2-tpl-temp');
+    else if (e.target.closest('.rm')) {
+      e.target.closest('.fcp2-src').remove();
+      drawCurve(card); setDirty(card);
+    }
   }, true);
   document.addEventListener('input', e => {
-    if (e.target.matches?.('#fcp2-manual-range')) syncManualRange();
-    else if (e.target.matches?.('#fcp2-manual-percent')) syncManualPercent();
+    if (!(e.target instanceof Element)) return;
+    if (e.target.matches('#fcp2-manual-range')) return syncManualRange();
+    if (e.target.matches('#fcp2-manual-percent')) return syncManualPercent();
+    const card = e.target.closest('.fcp2-card');
+    if (!card) return;
+    syncRangePair(card, e.target);
+    setDirty(card);
+  }, true);
+  document.addEventListener('change', e => {
+    if (!(e.target instanceof Element)) return;
+    if (e.target.matches('#fcp2-airflow')) return airflowToggle(e.target.checked);
+    const card = e.target.closest('.fcp2-card');
+    if (!card) return;
+    if (e.target.classList.contains('f-service'))
+      card.classList.toggle('is-disabled', !e.target.checked);
+    if (e.target.classList.contains('f-quiet')) {
+      $(card, '.f-quietbody').hidden = !e.target.checked;
+      drawCurve(card);
+    }
+    const src = e.target.closest('.fcp2-src');
+    if (src && e.target.classList.contains('f-src-disk')) updateDiskSummary(src);
+    if (src) drawCurve(card);
+    setDirty(card);
   }, true);
   document.addEventListener('toggle', e => {
     if (e.target.matches?.('#fcp2-manual') && manualActive && !e.target.open) e.target.open = true;
   }, true);
   fillRange(manualElements().range);
 
-  document.getElementById('fcp2-airflow').addEventListener('change', async e => {
+  async function airflowToggle(enabled) {
     const fd = new FormData();
     fd.append('op', 'fcp_airflow_toggle');
-    fd.append('enabled', e.target.checked ? '1' : '0');
+    fd.append('enabled', enabled ? '1' : '0');
     await fetch(API, { method: 'POST', body: fd });
-    toast(`Dashboard airflow tile ${e.target.checked ? 'enabled' : 'disabled'}`);
-  });
+    toast(`Dashboard airflow tile ${enabled ? 'enabled' : 'disabled'}`);
+  }
 
   // ------- live status -------
   async function poll() {
@@ -606,9 +638,10 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
       const st = await (await fetch(`${API}?op=status`)).json();
       const pill = document.getElementById('fcp2-status');
       const running = st.status === 'running';
+      const noFans = !running && st.enabled === 0;
       pill.classList.toggle('is-running', running);
-      pill.classList.toggle('is-stopped', !running);
-      $(pill, '.txt').textContent = running ? 'Running' : 'Stopped';
+      pill.classList.toggle('is-stopped', !running && !noFans);
+      $(pill, '.txt').textContent = running ? 'Running' : (noFans ? 'No fans enabled' : 'Stopped');
     } catch (e) { /* ignore */ }
     for (const card of $$(document, '.fcp2-card')) {
       const name = card.dataset.savedName;
