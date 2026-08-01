@@ -129,6 +129,11 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
 <template id="fcp2-tpl-temp"><?= fcp_render_source(
   ['type' => 'temp', 'disks' => '', 'path' => array_key_first($temp_sensors) ?? '', 'low' => 45, 'high' => 80],
   $disk_groups, $temp_sensors) ?></template>
+<template id="fcp2-tpl-fan"><?= render_fan_card([
+  'file' => '', 'custom' => '', 'service' => '1', 'controller' => '',
+  'pwm' => '102', 'max' => '255', 'idle' => '0', 'quiet' => '0',
+  'quiet_cap' => '150', 'interval' => '2', 'syslog' => '1', 'sources' => '0',
+], $pwms, $disk_groups, $temp_sensors, $pwm_labels) ?></template>
 
 <div class="fcp2 fcp2-toast" id="fcp2-toast"></div>
 
@@ -240,12 +245,16 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
   }
 
   // ------- range slider fill + number sync -------
-  function fillRange(r) { r.style.setProperty('--fill', r.value + '%'); }
+  function fillRange(r) {
+    const min = Number(r.min) || 0, max = Number(r.max) || 100, value = Number(r.value);
+    const fill = max > min ? Math.max(0, Math.min(100, (value - min) * 100 / (max - min))) : 0;
+    r.style.setProperty('--fill', `${fill}%`);
+  }
   function bindPair(card, rangeSel, numSel) {
     const r = $(card, rangeSel), n = $(card, numSel);
     if (!r || !n) return;
     fillRange(r);
-    r.addEventListener('input', () => { n.value = r.value; drawCurve(card); });
+    r.addEventListener('input', () => { n.value = r.value; fillRange(r); drawCurve(card); });
     n.addEventListener('input', () => {
       const v = Math.max(0, Math.min(100, parseInt(n.value, 10) || 0));
       r.value = v; fillRange(r); drawCurve(card);
@@ -441,6 +450,11 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
 
   async function del(card) {
     const name = $(card, '.f-custom').value.trim() || card.dataset.file;
+    if (!card.dataset.file) {
+      card.remove();
+      toast('Discarded new fan');
+      return;
+    }
     if (!confirm(`Delete fan "${name}"? This removes its configuration.`)) return;
     const fd = new FormData();
     fd.append('op', 'delete');
@@ -457,15 +471,8 @@ $version = trim(@file_get_contents("$docroot/plugins/$plugin/VERSION") ?: '');
       .then(() => toast(`Applied current temperatures to ${name}`));
   }
 
-  document.getElementById('fcp2-addfan').addEventListener('click', async () => {
-    const fd = new FormData();
-    fd.append('op', 'newtemp');
-    const res = await fetch(API, { method: 'POST', body: fd });
-    const html = await res.text();
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html.trim();
-    const card = tmp.querySelector('.fcp2-card');
-    if (!card) { toast('Could not add fan — unexpected server response'); return; }
+  document.getElementById('fcp2-addfan').addEventListener('click', () => {
+    const card = document.getElementById('fcp2-tpl-fan').content.firstElementChild.cloneNode(true);
     grid.insertBefore(card, document.getElementById('fcp2-addfan'));
     initCard(card);
     $(card, '.f-custom').focus();

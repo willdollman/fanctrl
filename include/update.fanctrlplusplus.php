@@ -20,7 +20,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') fail('POST required');
 
 // ---------- read + validate everything ------------------------------------
 $file = basename(trim($_POST['file'] ?? ''));
-if ($file === '' || !preg_match('/^fanctrlplusplus_[\w.-]+\.cfg$/', $file)) fail('Bad file name');
+$is_new = $file === '';
+if (!$is_new && !preg_match('/^fanctrlplusplus_[\w.-]+\.cfg$/', $file)) fail('Bad file name');
 
 $custom = trim($_POST['custom'] ?? '');
 if (!preg_match('/^[A-Za-z0-9_]+$/', $custom)) {
@@ -162,8 +163,8 @@ foreach ($kv as $k => $v) {
 }
 
 // ---------- write (atomic), then rename bookkeeping ------------------------
-if (!is_file("$cfgpath/$file")) fail('Original config file not found; reload the page.');
-$old_cfg = @parse_ini_file("$cfgpath/$file");
+if (!$is_new && !is_file("$cfgpath/$file")) fail('Original config file not found; reload the page.');
+$old_cfg = $is_new ? false : @parse_ini_file("$cfgpath/$file");
 $old_custom = is_array($old_cfg) ? trim($old_cfg['custom'] ?? '') : '';
 $tmp = "$cfgpath/.$new_file.tmp";
 if (file_put_contents($tmp, $content, LOCK_EX) === false) fail('Failed to write config.');
@@ -184,7 +185,7 @@ if (!rename($tmp, "$cfgpath/$new_file")) {
   fail('Failed to write config.');
 }
 
-if ($new_file !== $file) {
+if (!$is_new && $new_file !== $file) {
   @unlink("$cfgpath/$file");
   OrderManager::replaceFileName($file, $new_file);
 }
