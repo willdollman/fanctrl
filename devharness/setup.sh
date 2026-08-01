@@ -72,11 +72,11 @@ sudo chmod +x /usr/local/sbin/mdcmd
 
 # --- emhttp docroot symlink + cfg fixtures --------------------------------
 sudo mkdir -p /usr/local/emhttp/plugins /boot/config/plugins
-sudo ln -sfn "$repo" /usr/local/emhttp/plugins/fanctrlplus
-sudo mkdir -p /boot/config/plugins/fanctrlplus
-sudo chmod 777 /boot/config/plugins/fanctrlplus
+sudo ln -sfn "$repo" /usr/local/emhttp/plugins/fanctrlplusplus
+sudo mkdir -p /boot/config/plugins/fanctrlplusplus
+sudo chmod 777 /boot/config/plugins/fanctrlplusplus
 for f in "$here"/fixtures/*.cfg; do
-  sed "s|@FAKESYS@|$fs|g" "$f" > "/boot/config/plugins/fanctrlplus/$(basename "$f")"
+  sed "s|@FAKESYS@|$fs|g" "$f" > "/boot/config/plugins/fanctrlplusplus/$(basename "$f")"
 done
 
 echo "OK. Start the UI with: $here/serve.sh 8080"

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Manual "Run Now": read every configured source and apply max immediate demand.
-plugin=fanctrlplus; cfg_path=/boot/config/plugins/$plugin; custom=$1; cfg_file=$cfg_path/${plugin}_$custom.cfg
+plugin=fanctrlplusplus; cfg_path=/boot/config/plugins/$plugin; custom=$1; cfg_file=$cfg_path/${plugin}_$custom.cfg
 [[ -f $cfg_file ]] || exit 1; source "$cfg_file"; max=${max:-255}; controller_enable=${controller}_enable
 script_dir=$(dirname "$(readlink -f "$0")"); source "$script_dir/fanctrl_algo.sh"; source "$script_dir/fanctrl_sensors.sh"
 configure_sources

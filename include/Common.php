@@ -80,10 +80,10 @@ function extract_chip_and_pwm_from_path(string $old_path): ?array {
 
 function log_migrate(string $msg): void {
     // 本地独立日志
-    @file_put_contents("/var/log/fanctrlplus-migrate.log",
+    @file_put_contents("/var/log/fanctrlplusplus-migrate.log",
         date("c")." ".$msg."\n", FILE_APPEND);
     // 再打一份到 syslog
-    @exec("logger -t fanctrlplus '$msg'");
+    @exec("logger -t fanctrlplusplus '$msg'");
 }
 
 function safe_rewrite(string $file, string $content): bool {

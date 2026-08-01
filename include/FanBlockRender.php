@@ -1,9 +1,9 @@
 <?php
-// Card renderer for the FanCtrl Plus v2 UI.
+// Card renderer for the FanCtrl PlusPlus UI.
 // Each card is self-contained: it saves independently (no shared form),
 // so fields are identified by class, not by indexed names.
 
-$label_file = "/boot/config/plugins/fanctrlplus/pwm_labels.cfg";
+$label_file = "/boot/config/plugins/fanctrlplusplus/pwm_labels.cfg";
 $pwm_labels = [];
 if (is_file($label_file)) {
   foreach (file($label_file, FILE_IGNORE_NEW_LINES) as $line) {

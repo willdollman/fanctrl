@@ -6,7 +6,7 @@ faking the environment the plugin expects:
 - fake sysfs tree (`fakesys/`) exposed to PHP via the `FCP_SYS_ROOT` env var
   (see `fcp_sys_root()` in `include/Common.php`; empty in production)
 - fake `/dev/sd*` + `/dev/disk/by-id` entries, `mdcmd` stub (needs sudo, once)
-- fixture cfg files installed to `/boot/config/plugins/fanctrlplus`
+- fixture cfg files installed to `/boot/config/plugins/fanctrlplusplus`
 - vendored copies of the libs Unraid's webgui normally provides
   (jQuery, jQuery UI, Font Awesome 4) — downloaded once by `setup.sh`
 
@@ -15,7 +15,7 @@ faking the environment the plugin expects:
 ```bash
 ./devharness/setup.sh        # one-time environment prep (uses sudo)
 ./devharness/serve.sh 8080   # start PHP dev server
-# open http://localhost:8080/Settings/fanctrlplus
+# open http://localhost:8080/Settings/fanctrlplusplus
 ```
 
 `router.php` emulates just enough of Unraid's webgui: it strips the .page

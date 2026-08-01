@@ -1,16 +1,16 @@
 #!/bin/bash
 
-plugin="fanctrlplus"
-LOG="/var/log/fanctrlplus_array_watch.log"
+plugin="fanctrlplusplus"
+LOG="/var/log/fanctrlplusplus_array_watch.log"
 CHECK_INTERVAL=10
 rc_script="/etc/rc.d/rc.${plugin}"
-pidfile="/var/run/fanctrlplus.user_stopped"
+pidfile="/var/run/fanctrlplusplus.user_stopped"
 
 last_md_state=""
 last_fanctrl_state=0
 
 log() {
-  echo "[fanctrlplus] $(date +'%Y-%m-%d %H:%M:%S') $1" >> "$LOG"
+  echo "[fanctrlplusplus] $(date +'%Y-%m-%d %H:%M:%S') $1" >> "$LOG"
 }
 
 check_array_started() {
@@ -20,7 +20,7 @@ check_array_started() {
 }
 
 is_fanctrl_running() {
-  pgrep -f fanctrlplus_loop.sh | grep -vq "$$"
+  pgrep -f fanctrlplusplus_loop.sh | grep -vq "$$"
 }
 
 log "Array monitor started"
@@ -36,7 +36,7 @@ while true; do
   fi
 
   if [[ "$current_md_state" == "STARTED" && "$fanctrl_running" -eq 0 && ! -f "$pidfile" ]]; then
-    log "FanCtrlPlus not running after array start → launching"
+    log "FanCtrl PlusPlus not running after array start → launching"
     "$rc_script" start
   fi
 

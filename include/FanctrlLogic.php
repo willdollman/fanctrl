@@ -2,14 +2,14 @@
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-$plugin  = 'fanctrlplus';
+$plugin  = 'fanctrlplusplus';
 $docroot = $docroot ?? $_SERVER['DOCUMENT_ROOT'] ?: '/usr/local/emhttp';
 $cfg_dir = "/boot/config/plugins/$plugin";
 $order_file = "$cfg_dir/order.cfg";
 $label_file = "$cfg_dir/pwm_labels.cfg";
 
 require_once "$docroot/plugins/$plugin/include/Common.php";
-require_once "/usr/local/emhttp/plugins/fanctrlplus/include/OrderManager.php";
+require_once "/usr/local/emhttp/plugins/fanctrlplusplus/include/OrderManager.php";
 
 header('Content-Type: application/json');
 
@@ -17,7 +17,7 @@ $op = $_GET['op'] ?? $_POST['op'] ?? '';
 
 if ($op === 'refresh_single' && !empty($_GET['custom'])) {
   $custom = escapeshellarg($_GET['custom']);
-  shell_exec("/usr/local/emhttp/plugins/fanctrlplus/scripts/fanctrlplus_refresh_single.sh $custom > /dev/null 2>&1 &");
+  shell_exec("/usr/local/emhttp/plugins/fanctrlplusplus/scripts/fanctrlplusplus_refresh_single.sh $custom > /dev/null 2>&1 &");
   exit('OK');
 }
 
@@ -92,7 +92,7 @@ switch ($op) {
     $pwm = $_POST['pwm'] ?? '';
     $label = $_POST['label'] ?? '';
 
-    $label_file = "/boot/config/plugins/fanctrlplus/pwm_labels.cfg";
+    $label_file = "/boot/config/plugins/fanctrlplusplus/pwm_labels.cfg";
     // 读取现有label
     $lines = is_file($label_file) ? file($label_file, FILE_IGNORE_NEW_LINES) : [];
     $found = false;
@@ -174,7 +174,7 @@ switch ($op) {
       $cfg_file = basename($_POST['cfg']);
       $enabled = isset($_POST['enabled']) && $_POST['enabled'] == 1 ? 1 : 0;
 
-      $cfg_dir = "/boot/config/plugins/fanctrlplus";
+      $cfg_dir = "/boot/config/plugins/fanctrlplusplus";
       $cfg_path = "$cfg_dir/$cfg_file";
 
       if (file_exists($cfg_path)) {
@@ -210,7 +210,7 @@ switch ($op) {
     break;
 
   case 'status':
-    $pid_files = glob("/var/run/fanctrlplus_*.pid");
+    $pid_files = glob("/var/run/fanctrlplusplus_*.pid");
     $running = false;
     foreach ($pid_files as $pidfile) {
       $pid = trim(@file_get_contents($pidfile));
@@ -232,7 +232,7 @@ switch ($op) {
       $name = trim($cfg['custom'] ?? '');
       $enabled = trim($cfg['service'] ?? '0') === '1';
 
-      // 保持和 rc.fanctrlplus 的一致性（自定义名 → pid 文件名）
+      // 保持和 rc.fanctrlplusplus 的一致性（自定义名 → pid 文件名）
       $name_trimmed = trim($name);
       $custom_safe = preg_replace('/\W+/', '_', $name_trimmed);
       $pid_file = "/var/run/{$plugin}_{$custom_safe}.pid";
@@ -254,12 +254,12 @@ switch ($op) {
     break;
 
   case 'saveorder':
-    error_log("[fanctrlplus] 🔥 saveorder triggered");
+    error_log("[fanctrlplusplus] 🔥 saveorder triggered");
 
     $order_raw = $_POST['order'] ?? [];
 
     if (!is_array($order_raw)) {
-      error_log("[fanctrlplus] ⚠️ order is not array: " . print_r($order_raw, true));
+      error_log("[fanctrlplusplus] ⚠️ order is not array: " . print_r($order_raw, true));
       json_response(['status' => 'error', 'message' => 'Order not array']);
     }
 
@@ -281,24 +281,24 @@ switch ($op) {
       file_put_contents("$cfg_dir/order.cfg", $output);
       json_response(['status' => 'ok']);
     } else {
-      error_log("[fanctrlplus] ❌ Blocked invalid saveorder: " . print_r($order_raw, true));
+      error_log("[fanctrlplusplus] ❌ Blocked invalid saveorder: " . print_r($order_raw, true));
       json_response(['status' => 'error', 'message' => 'Invalid order']);
     }
     break;
     
   case 'start':
-    shell_exec("/etc/rc.d/rc.fanctrlplus start");
+    shell_exec("/etc/rc.d/rc.fanctrlplusplus start");
     json_response(['status' => 'started']);
     break;
   
   case 'stop':
-    shell_exec("/etc/rc.d/rc.fanctrlplus stop");
+    shell_exec("/etc/rc.d/rc.fanctrlplusplus stop");
     json_response(['status' => 'stopped']);
     break;
 
   case 'getpwm':
     $pwms = list_pwm();
-    $label_file = "/boot/config/plugins/fanctrlplus/pwm_labels.cfg";
+    $label_file = "/boot/config/plugins/fanctrlplusplus/pwm_labels.cfg";
     $labels = [];
     if (is_file($label_file)) {
       foreach (file($label_file, FILE_IGNORE_NEW_LINES) as $line) {
@@ -317,7 +317,7 @@ switch ($op) {
     $custom = $_GET['custom'] ?? '';
     $custom = basename($custom); // 安全过滤
 
-    $plugin = 'fanctrlplus';
+    $plugin = 'fanctrlplusplus';
     $temp_file = "/var/tmp/{$plugin}/temp_{$plugin}_{$custom}";
     $rpm_file  = "/var/tmp/{$plugin}/rpm_{$plugin}_{$custom}";
 
@@ -329,7 +329,7 @@ switch ($op) {
 
   case 'fcp_airflow_toggle':
     
-      $cfg_dir     = "/boot/config/plugins/fanctrlplus";
+      $cfg_dir     = "/boot/config/plugins/fanctrlplusplus";
       $labels_file = $cfg_dir.'/pwm_labels.cfg';
 
       $enabled = (($_POST['enabled'] ?? '0') === '1');

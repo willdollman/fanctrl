@@ -13,7 +13,7 @@ else idle_pwm_abs=0; fi
 (( idle_pwm_abs < 0 )) && idle_pwm_abs=0; (( idle_pwm_abs > max )) && idle_pwm_abs=$max
 (( idle_pwm_abs > min_pwm_abs )) && idle_pwm_abs=$min_pwm_abs
 
-plugin=fanctrlplus; custom=${custom:-$(basename "$cfg_file" .cfg)}; controller_enable=${controller}_enable
+plugin=fanctrlplusplus; custom=${custom:-$(basename "$cfg_file" .cfg)}; controller_enable=${controller}_enable
 tick=${tick:-5}; disk_poll_s=$((${interval:-1} * 60)); (( disk_poll_s < tick )) && disk_poll_s=$tick
 if [[ $controller =~ pwm([0-9]+)$ ]]; then fan_index=${BASH_REMATCH[1]}; fan_path=$(dirname "$controller")/fan${fan_index}_input; else fan_path=; fi
 mkdir -p "/var/tmp/$plugin"

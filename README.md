@@ -1,37 +1,33 @@
-# **FanCtrl Plus**
+# FanCtrl PlusPlus
 
-**FanCtrl Plus** is an Unraid plugin that provides automatic fan control based on the temperatures of HDDs, NVMe drives, Unassigned Devices, and optionally the CPU.  
-Each fan configuration can monitor specific drives or the CPU, define a temperature range, and scale fan speed automatically using a linear control algorithm.  
-Configuration is done through a user-friendly interface, with custom thresholds, intervals, and labels available per fan.
+FanCtrl PlusPlus is an independently installable Unraid plugin for automatic PWM fan control based on HDD, NVMe, Unassigned Devices, and optional CPU temperatures. It supports per-fan temperature sources and thresholds, quiet mode, labels, and dashboard monitoring.
 
-## ✨ Features
+> **Hardware safety:** uninstall or disable every other fan controller before using FanCtrl PlusPlus. FanCtrl PlusPlus has a separate plugin and filesystem identity and can coexist with other plugins, but two controllers must never drive the same PWM hardware.
 
-- Full-featured Web UI for configuration and monitoring
-- Supports temporary fan configuration with safe validation and custom naming
-- Automatically starts with the Unraid array for hands-free operation
-- Set custom thresholds and intervals per fan
-- Control multiple PWM fans independently
-- Monitor temps from array disks, NVMe, unassigned devices, and optionally the CPU
-- Uses a linear control algorithm to smoothly adjust fan speed (PWM) based on the current temperature (disk or CPU) between your defined low/high values
-- Identify and label PWM controllers to match physical fans easily
-- Dashboard tile and system integration
-- Optional FCP Airflow Dashboard tile, similar to Unraid’s built-in Airflow tile but enhanced with support for custom fan labels
-- Drag and drop fan configuration boxes to reorder them as you like. The new order is saved and reflected in both the UI and Dashboard.
+## Install
 
----
+Paste this URL into **Unraid → Plugins → Install Plugin**:
 
-## 🔧 Manual Installation
+```text
+https://raw.githubusercontent.com/willdollman/fanctrl/main/unraid/fanctrlplusplus.plg
+```
 
-**FanCtrl Plus** is available in Community Apps (CA). Just search for “**FanCtrl Plus**” to install.
+Releases and issues are hosted at [github.com/willdollman/fanctrl](https://github.com/willdollman/fanctrl).
 
-Support / Issues
-- https://forums.unraid.net/topic/191722-plugin-fancrtl-plus/
+## Release
 
-- If you find this plugin helpful, consider buying me a coffee!
+1. Merge reviewed changes to `main` and ensure the working tree is clean.
+2. Run the **Release** workflow manually and enter a semantic version without a leading `v` (for example, `2.0.0`).
+3. The workflow checks out `main`, rejects an existing tag/release, builds the deterministic package, updates the manifest version and MD5, commits that manifest as `github-actions[bot]`, tags and pushes it, then creates the GitHub release with the `.txz` asset.
 
-<p align="left">
-  <a href="https://www.paypal.com/paypalme/cck9393" target="_blank">
-    <img src="https://raw.githubusercontent.com/ck9393/fanctrlplus/main/.github/assets/donate.png" alt="Donate" width="90">
-  </a>
-</p>
+The workflow requires `contents: write`; a protected `main` branch must permit the GitHub Actions bot to push the release commit and tag.
 
+For a local package build:
+
+```bash
+scripts/build-package.sh 2.0.0 dist
+```
+
+## Attribution and licensing
+
+FanCtrl PlusPlus originated as a fork of [ck9393/fanctrlplus](https://github.com/ck9393/fanctrlplus). The upstream project currently has no visible license. No license is added here; clarification of redistribution terms is a blocker before submitting FanCtrl PlusPlus to Community Applications.

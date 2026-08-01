@@ -1,8 +1,8 @@
 Menu="Dashboard:0"
-Cond="version_compare(parse_ini_file('/etc/unraid-version')['version'],'6.11.9','>') && is_file('/boot/config/plugins/fanctrlplus/pwm_labels.cfg') && strpos(file_get_contents('/boot/config/plugins/fanctrlplus/pwm_labels.cfg'),'__FCP_AIRFLOW__=1')!==false"
+Cond="version_compare(parse_ini_file('/etc/unraid-version')['version'],'6.11.9','>') && is_file('/boot/config/plugins/fanctrlplusplus/pwm_labels.cfg') && strpos(file_get_contents('/boot/config/plugins/fanctrlplusplus/pwm_labels.cfg'),'__FCP_AIRFLOW__=1')!==false"
 ---
 <?php
-$pluginname = "fanctrlplus";
+$pluginname = "fanctrlplusplus";
 
 // Unraid 7.2+ 使用 mixed；旧版用 sortable（与官方一致）
 $isResponsiveWebgui = version_compare((parse_ini_file('/etc/unraid-version')['version'] ?? '0.0.0'), '7.2.0-beta', '>=');
@@ -33,7 +33,7 @@ $mytiles[$pluginname]['column2'] .= <<<EOT
         </span>
         <span class="tile-header-right">
           <span class="tile-header-right-controls">
-            <a href="/Settings/fanctrlplus" title="Go to FanCtrl Plus settings">
+            <a href="/Settings/fanctrlplusplus" title="Go to FanCtrl PlusPlus settings">
               <i class="fa fa-fw fa-cog control"></i>
             </a>
           </span>
@@ -58,7 +58,7 @@ $mytiles[$pluginname]['column2'] .= <<<EOT
   function esc(s){ return String(s ?? '').replace(/[&<>\"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\\'': '&#39;'}[m])); }
 
   async function getData(){
-    const r = await fetch('/plugins/fanctrlplus/include/FcpAirflow.php', {cache:'no-store'});
+    const r = await fetch('/plugins/fanctrlplusplus/include/FcpAirflow.php', {cache:'no-store'});
     if(!r.ok) throw new Error('http ' + r.status);
     return await r.json();
   }

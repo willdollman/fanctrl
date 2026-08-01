@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""Browser interaction tests for the fanctrlplus card UI."""
+"""Browser interaction tests for the fanctrlplusplus card UI."""
 import json
+import os
 import re
 import sys
 import time
 
 from playwright.sync_api import sync_playwright
 
-BASE = "http://localhost:8080/Settings/fanctrlplus"
-CFG = "/boot/config/plugins/fanctrlplus/fanctrlplus_HDD_Bay.cfg"
-HERE = "/home/user/workspace/fanctrlplus/devharness"
+BASE = "http://localhost:8080/Settings/fanctrlplusplus"
+CFG = "/boot/config/plugins/fanctrlplusplus/fanctrlplusplus_HDD_Bay.cfg"
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Reset fixtures so the test is idempotent
-import os, subprocess
-for f in os.listdir("/boot/config/plugins/fanctrlplus"):
-    if f.startswith("fanctrlplus_") and f.endswith(".cfg"):
-        os.remove(f"/boot/config/plugins/fanctrlplus/{f}")
-for name in ("fanctrlplus_HDD_Bay.cfg", "fanctrlplus_CPU_Fan.cfg", "order.cfg"):
+import subprocess
+for f in os.listdir("/boot/config/plugins/fanctrlplusplus"):
+    if f.startswith("fanctrlplusplus_") and f.endswith(".cfg"):
+        os.remove(f"/boot/config/plugins/fanctrlplusplus/{f}")
+for name in ("fanctrlplusplus_HDD_Bay.cfg", "fanctrlplusplus_CPU_Fan.cfg", "order.cfg"):
     src = open(f"{HERE}/fixtures/{name}").read().replace("@FAKESYS@", f"{HERE}/fakesys")
-    open(f"/boot/config/plugins/fanctrlplus/{name}", "w").write(src)
+    open(f"/boot/config/plugins/fanctrlplusplus/{name}", "w").write(src)
 
 results = []
 
@@ -138,9 +139,9 @@ with sync_playwright() as p:
     hdd.locator("button.f-apply").click()
     page.wait_for_timeout(800)
     import os
-    check("renamed file exists", os.path.exists("/boot/config/plugins/fanctrlplus/fanctrlplus_HDD_Bay2.cfg"))
+    check("renamed file exists", os.path.exists("/boot/config/plugins/fanctrlplusplus/fanctrlplusplus_HDD_Bay2.cfg"))
     check("old file removed", not os.path.exists(CFG))
-    order = open("/boot/config/plugins/fanctrlplus/order.cfg").read()
+    order = open("/boot/config/plugins/fanctrlplusplus/order.cfg").read()
     check("order.cfg updated", "HDD_Bay2" in order and "HDD_Bay\n" not in order.replace("HDD_Bay2", ""), order.strip())
     # rename back
     page.goto(BASE, wait_until="networkidle")

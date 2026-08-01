@@ -6,7 +6,7 @@ header('Content-Type: application/json; charset=utf-8');
  * 用 realpath(dirname(...)) + 通道号N 作为 key，映射到同目录 fanN_input。
  */
 function load_labels(): array {
-  $cfg = '/boot/config/plugins/fanctrlplus/pwm_labels.cfg';
+  $cfg = '/boot/config/plugins/fanctrlplusplus/pwm_labels.cfg';
   $dirN_to_label = []; // key = realdir.'::'.N => label
   if (!is_file($cfg)) return $dirN_to_label;
 

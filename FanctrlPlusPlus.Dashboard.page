@@ -2,7 +2,7 @@ Menu="Dashboard:0"
 Cond="version_compare(parse_ini_file('/etc/unraid-version')['version'],'6.11.9','>')"
 ---
 <?php
-$pluginname = "fanctrlplus";
+$pluginname = "fanctrlplusplus";
 $cfg_path = "/boot/config/plugins/$pluginname";
 $cfg_files = glob("$cfg_path/{$pluginname}_*.cfg");
 
@@ -11,7 +11,7 @@ $order = [];
 $all_cfg = [];
 
 // 获取状态
-$status_text = file_exists("/var/run/{$pluginname}.pid") ? "Running" : "Inactive";
+$status_text = count(glob("/var/run/{$pluginname}_*.pid") ?: []) > 0 ? "Running" : "Inactive";
 $status_color = $status_text === "Running" ? "green-text" : "red-text";
 
 // 先读取 order.cfg 顺序
@@ -63,9 +63,9 @@ foreach ($all_cfg as $cfg) {
         /
         <span class="fp-pct">--</span>
       </span>
-      <span class="w18 fanctrlplus-fanstatus" data-label="$label">--</span>
+      <span class="w18 fanctrlplusplus-fanstatus" data-label="$label">--</span>
       <span class="w18">
-        <span class="fa fa-refresh fanctrlplus-refresh"
+        <span class="fa fa-refresh fanctrlplusplus-refresh"
           data-label="$label"
           style="cursor:pointer;font-size:13px;color:var(--blue-800);vertical-align:middle;"
           title="Manual Run: Read current temperature and set fan speed immediately"></span>
@@ -76,11 +76,11 @@ foreach ($all_cfg as $cfg) {
 }
 
 // 样式输出
-echo '<link rel="stylesheet" href="/plugins/fanctrlplus/fonts/style.css">' . PHP_EOL;
+echo '<link rel="stylesheet" href="/plugins/fanctrlplusplus/fonts/style.css">' . PHP_EOL;
 echo <<<STYLE
 <style>
 /* ====== 顶部状态（保留原样） ====== */
-.fanctrlplus-status{
+.fanctrlplusplus-status{
   font-weight: normal;
   font-size: 12px;
   display: inline-block;
@@ -93,33 +93,33 @@ echo <<<STYLE
   text-align: center;
 }
 /* ====== 表头：桌面全称，≤1080px 用短写 ====== */
-#fanctrlplus-dashboard .fcp-col-head .mobile{ display:none; }
+#fanctrlplusplus-dashboard .fcp-col-head .mobile{ display:none; }
 @media (max-width:1080px){
-  #fanctrlplus-dashboard .fcp-col-head .full  { display:none; }
-  #fanctrlplus-dashboard .fcp-col-head .mobile{ display:inline; }
+  #fanctrlplusplus-dashboard .fcp-col-head .full  { display:none; }
+  #fanctrlplusplus-dashboard .fcp-col-head .mobile{ display:inline; }
 }
 
 /* ====== 温度列（新结构）====== */
 /* 外层容器：桌面一行排列 */
-#fanctrlplus-dashboard .fcp-col-temp{
+#fanctrlplusplus-dashboard .fcp-col-temp{
   display:inline-flex; gap:6px; align-items:baseline;
 }
 
 /* 数值部分 */
-#fanctrlplus-dashboard .fcp-col-temp .fp-tval{
+#fanctrlplusplus-dashboard .fcp-col-temp .fp-tval{
   display: inline-block;
   min-width: 16px;
   text-align: center;
 }
 
 /* 单位（兼容旧 */
-#fanctrlplus-dashboard .fcp-col-temp{
+#fanctrlplusplus-dashboard .fcp-col-temp{
   display:grid;
   grid-template-columns: 30px 55px;
 }
 
 /* 来源 */
-#fanctrlplus-dashboard .fcp-col-temp .fp-origin{
+#fanctrlplusplus-dashboard .fcp-col-temp .fp-origin{
   display:inline-block;
   min-width:55px;
   text-align:center;
@@ -129,20 +129,20 @@ echo <<<STYLE
 }
 
 /* 无来源时的占位（与来源宽度匹配，避免跳动） */
-#fanctrlplus-dashboard .fcp-col-temp .fp-origin-placeholder{
+#fanctrlplusplus-dashboard .fcp-col-temp .fp-origin-placeholder{
   text-align:center;
   color:inherit;
 }
 
 /* ====== ≤1080px：两行布局，避免 w18 溢出 ====== */
 @media (max-width:1080px){
-  #fanctrlplus-dashboard .fcp-col-temp{
+  #fanctrlplusplus-dashboard .fcp-col-temp{
     display:block; line-height:1.1;
   }
-  #fanctrlplus-dashboard .fcp-col-temp .fp-tval{
+  #fanctrlplusplus-dashboard .fcp-col-temp .fp-tval{
     display:inline-block;         /* 上行：温度 */
   }
-  #fanctrlplus-dashboard .fcp-col-temp .fp-origin {
+  #fanctrlplusplus-dashboard .fcp-col-temp .fp-origin {
     display:block;             /* 下行：来源 */
     font-size:80%;
     opacity:.65;
@@ -150,7 +150,7 @@ echo <<<STYLE
     min-width:0;
     text-align:left;
   }
-  #fanctrlplus-dashboard .fcp-col-temp .fp-origin-placeholder{
+  #fanctrlplusplus-dashboard .fcp-col-temp .fp-origin-placeholder{
     display:block;
     min-width:0;
     text-align:left;
@@ -164,23 +164,23 @@ $isResponsiveWebgui = version_compare((parse_ini_file('/etc/unraid-version')['ve
 $tbodyClass = $isResponsiveWebgui ? 'mixed' : 'sortable';
 
 $headerSection = $isResponsiveWebgui
-  ? "<h3 class='tile-header-main'>FanCtrl Plus</h3>\n<span class='fanctrlplus-status $status_color'>Status: $status_text</span>"
-  : "FanCtrl Plus<br>\n<span class='fanctrlplus-status $status_color'>Status: $status_text</span><br>";
+  ? "<h3 class='tile-header-main'>FanCtrl PlusPlus</h3>\n<span class='fanctrlplusplus-status $status_color'>Status: $status_text</span>"
+  : "FanCtrl PlusPlus<br>\n<span class='fanctrlplusplus-status $status_color'>Status: $status_text</span><br>";
 
 $mytiles[$pluginname]['column2'] = <<<EOT
-<tbody id="fanctrlplus-dashboard" class="$tbodyClass" title="FanCtrl Plus">
+<tbody id="fanctrlplusplus-dashboard" class="$tbodyClass" title="FanCtrl PlusPlus">
   <tr>
     <td>
       <span class="tile-header">
         <span class="tile-header-left">
-          <i class="icon-fanctrlplus f32"></i>
+          <i class="icon-fanctrlplusplus f32"></i>
           <div class="section">
             $headerSection
           </div>
         </span>
         <span class="tile-header-right">
           <span class="tile-header-right-controls">
-            <a href="/Settings/fanctrlplus" title="Go to FanCtrl Plus settings">
+            <a href="/Settings/fanctrlplusplus" title="Go to FanCtrl PlusPlus settings">
               <i class="fa fa-fw fa-cog control"></i>
             </a>
         </span>
@@ -208,7 +208,7 @@ EOT;
 <script>
 // 设置温度与来源。支持 *, --，以及无来源时用占位“-”
 function setTempCell(label, val, origin) {
-  const tile = document.getElementById('fanctrlplus-dashboard');
+  const tile = document.getElementById('fanctrlplusplus-dashboard');
   if (!tile) return;
 
   // 保险：label 里若有特殊字符，避免 querySelector 失效
@@ -248,18 +248,18 @@ function setTempCell(label, val, origin) {
   }
 }
 
-function updateFanctrlplusTile() {
-  const tile = document.getElementById("fanctrlplus-dashboard");
+function updateFanctrlPlusPlusTile() {
+  const tile = document.getElementById("fanctrlplusplus-dashboard");
   if (!tile) return;
 
-  fetch("/plugins/fanctrlplus/FanctrlDashboard.php")
+  fetch("/plugins/fanctrlplusplus/FanctrlPlusPlusDashboard.php")
     .then(res => res.json())
     .then(data => {
       // 顶部状态
-      const statusSpan = tile.querySelector(".fanctrlplus-status");
+      const statusSpan = tile.querySelector(".fanctrlplusplus-status");
       if (statusSpan) {
         statusSpan.textContent = `Status: ${data.status}`;
-        statusSpan.className = "fanctrlplus-status " + (data.status === "Running" ? "green-text" : "red-text");
+        statusSpan.className = "fanctrlplusplus-status " + (data.status === "Running" ? "green-text" : "red-text");
       }
 
       // 行数据（仅新结构）
@@ -267,7 +267,7 @@ function updateFanctrlplusTile() {
         setTempCell(f.label, f.temp_raw, f.temp_origin);
 
         const rpmWrap = tile.querySelector(`.fcp-col-rpm[data-label="${f.label}"]`);
-        const statEl  = tile.querySelector(`.fanctrlplus-fanstatus[data-label="${f.label}"]`);
+        const statEl  = tile.querySelector(`.fanctrlplusplus-fanstatus[data-label="${f.label}"]`);
 
         if (rpmWrap) {
           const rpmValEl = rpmWrap.querySelector('.fp-rval');
@@ -281,7 +281,7 @@ function updateFanctrlplusTile() {
       });
     })
     .catch(() => {
-      const statusSpan = tile?.querySelector(".fanctrlplus-status");
+      const statusSpan = tile?.querySelector(".fanctrlplusplus-status");
       if (statusSpan) statusSpan.textContent = "Status: Loading...";
 
       // 仅复位新结构
@@ -289,24 +289,24 @@ function updateFanctrlplusTile() {
       tile?.querySelectorAll('.fcp-col-temp .fp-origin').forEach(n => n.textContent = '');
       tile?.querySelectorAll('.fcp-col-rpm .fp-rval').forEach(n => n.textContent = '--');
       tile?.querySelectorAll('.fcp-col-rpm .fp-pct').forEach(n => n.textContent = '--%');
-      tile?.querySelectorAll('.fanctrlplus-fanstatus').forEach(n => n.textContent = '--');
+      tile?.querySelectorAll('.fanctrlplusplus-fanstatus').forEach(n => n.textContent = '--');
     });
 }
 
 // 单风扇立即执行 (Run Now)
 function refreshSingleFan(custom) {
-  fetch(`/plugins/fanctrlplus/include/FanctrlLogic.php?op=refresh_single&custom=${encodeURIComponent(custom)}`)
-    .then(() => setTimeout(updateFanctrlplusTile, 2000)); // 2秒后刷新界面
+  fetch(`/plugins/fanctrlplusplus/include/FanctrlLogic.php?op=refresh_single&custom=${encodeURIComponent(custom)}`)
+    .then(() => setTimeout(updateFanctrlPlusPlusTile, 2000)); // 2秒后刷新界面
 }
 
 document.addEventListener("DOMContentLoaded", function () {
-  setTimeout(updateFanctrlplusTile, 200);
-  setInterval(updateFanctrlplusTile, 5000);
+  setTimeout(updateFanctrlPlusPlusTile, 200);
+  setInterval(updateFanctrlPlusPlusTile, 5000);
 
-  const dashboard = document.getElementById("fanctrlplus-dashboard");
+  const dashboard = document.getElementById("fanctrlplusplus-dashboard");
   if (dashboard) {
     dashboard.addEventListener("click", function(e) {
-      const btn = e.target.closest('.fanctrlplus-refresh');
+      const btn = e.target.closest('.fanctrlplusplus-refresh');
       if (!btn) return;
 
       const label = btn.getAttribute('data-label');

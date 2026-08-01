@@ -62,7 +62,7 @@ class Ema:
 
 @dataclass
 class BaselineFanctrl:
-    """Current fanctrlplus algorithm: instantaneous sample every 60s,
+    """Current FanCtrl PlusPlus baseline algorithm: instantaneous sample every 60s,
     linear map, write only if |dPWM| >= 5."""
 
     name: str = "baseline_60s"

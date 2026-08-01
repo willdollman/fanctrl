@@ -1,0 +1,39 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+<!ENTITY name "fanctrlplusplus">
+<!ENTITY version "2.0.0">
+<!ENTITY author "willdollman">
+<!ENTITY launch "Settings/fanctrlplusplus">
+<!ENTITY pluginURL "https://raw.githubusercontent.com/willdollman/fanctrl/main/unraid/fanctrlplusplus.plg">
+<!ENTITY source "/boot/config/plugins/&name;">
+<!ENTITY txz "&source;/&name;-&version;.txz">
+<!ENTITY MD5 "0794eb8f9d7ca2b8c6e2b149324d4f3b">
+]>
+<PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" min="6.9.0">
+<ICON>/usr/local/emhttp/plugins/fanctrlplusplus/images/fanctrlplus.png</ICON>
+<CHANGES>
+###2.0.0
+- Initial public FanCtrl PlusPlus release.
+</CHANGES>
+<FILE Run="/bin/bash">
+<INLINE>
+#!/bin/bash
+md5=$(md5sum &txz; 2>/dev/null | awk '{print $1}')
+[[ $md5 == &MD5; ]] || rm -f &source;/*.txz
+</INLINE>
+</FILE>
+<FILE Name="&txz;" Run="upgradepkg --install-new --reinstall">
+<URL>https://github.com/willdollman/fanctrl/releases/download/v&version;/fanctrlplusplus-&version;.txz</URL>
+<MD5>&MD5;</MD5>
+</FILE>
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+#!/bin/bash
+/etc/rc.d/rc.fanctrlplusplus stop 2>/dev/null || true
+pkill -f '/usr/local/emhttp/plugins/fanctrlplusplus/scripts/array_monitor.sh' 2>/dev/null || true
+rm -rf /usr/local/emhttp/plugins/fanctrlplusplus /boot/config/plugins/fanctrlplusplus /var/tmp/fanctrlplusplus
+rm -f /etc/rc.d/rc.fanctrlplusplus /var/run/fanctrlplusplus.user_stopped /var/run/fanctrlplusplus_*.pid
+echo "FanCtrl PlusPlus has been removed. Reboot before enabling another fan controller."
+</INLINE>
+</FILE>
+</PLUGIN>

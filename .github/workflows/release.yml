@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semantic version without a leading v
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fanctrlplusplus-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Validate release state
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Version must be X.Y.Z without v'; exit 1; }
+          [[ "$(git branch --show-current)" == main ]] || { echo 'Releases are restricted to main'; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo 'Tag already exists'; exit 1
+          fi
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'Release already exists'; exit 1
+          fi
+      - name: Build and update manifest
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/build-package.sh "$VERSION" dist
+          md5=$(md5sum "dist/fanctrlplusplus-$VERSION.txz" | awk '{print $1}')
+          sed -i -E "s/(<!ENTITY version \")[^\"]+/\1$VERSION/; s/(<!ENTITY MD5 \")[^\"]+/\1$md5/" unraid/fanctrlplusplus.plg
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add unraid/fanctrlplusplus.plg
+          git diff --cached --quiet || git commit -m "Release v$VERSION"
+          git tag "v$VERSION"
+          git push origin HEAD:main "v$VERSION"
+      - name: Create GitHub release
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "v$VERSION" "dist/fanctrlplusplus-$VERSION.txz" --repo "$GITHUB_REPOSITORY" --title "FanCtrl PlusPlus v$VERSION" --generate-notes

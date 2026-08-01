@@ -1,7 +1,7 @@
 <?php
 header('Content-Type: application/json');
 
-$plugin = "fanctrlplus";
+$plugin = "fanctrlplusplus";
 $cfg_path = "/boot/config/plugins/$plugin";
 $tmp_path = "/var/tmp/$plugin";
 
@@ -12,7 +12,7 @@ $fans = [];
 
 if (isset($_GET['op']) && $_GET['op'] === 'refresh' && !empty($_GET['custom'])) {
     $custom = escapeshellarg($_GET['custom']);
-    $script = "/usr/local/emhttp/plugins/fanctrlplus/scripts/fanctrlplus_refresh_single.sh $custom";
+    $script = "/usr/local/emhttp/plugins/fanctrlplusplus/scripts/fanctrlplusplus_refresh_single.sh $custom";
     shell_exec($script . " > /dev/null 2>&1 &");
     echo json_encode(['ok' => 1]);
     exit;

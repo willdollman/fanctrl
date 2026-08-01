@@ -121,7 +121,7 @@
 /* 统一 13px（内部图标等） */
 .fcp-fs-13 { font-size: 13px; }
 
-/* ===== FanCtrl Plus: variables (auto light/dark) ===== */
+/* ===== FanCtrl PlusPlus: variables (auto light/dark) ===== */
 :root {
   --frame-color: #000000;
   --hub-color: #666666;
@@ -508,7 +508,7 @@ dt.containerSettingsDt {
 .switch-button-background.checked ~ .switch-button-label.off{ display: none; }
 
 /* 针对窄屏手机的 fan-block 进一步优化 */
-/* ===== Mobile overrides for FanCtrl Plus ===== */
+/* ===== Mobile overrides for FanCtrl PlusPlus ===== */
 @media (min-width: 768px) {
   #fan-area {
     grid-template-columns: 1fr 1fr;  /* 横屏或平板 → 两列 */

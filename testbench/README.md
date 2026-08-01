@@ -45,7 +45,7 @@ red = CPU temp, orange = hottest disk, blue = PWM).
 
 ## Controllers
 
-- `baseline_60s` — what fanctrlplus ships today: one instantaneous sample per
+- `baseline_60s` — the original baseline: one instantaneous sample per
   60s, linear temp->PWM map, 5-count write deadband
 - `fast_linear` — same, sampled at 5s/30s (CPU/disk): fixes staleness, keeps jitter
 - `smooth_slew` — EMA-filtered temps -> curve -> deadband -> asymmetric slew

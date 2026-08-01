@@ -41,7 +41,7 @@ if (preg_match('#^/webGui/fonts/(.+)$#', $uri, $m) || preg_match('#/fonts/(fonta
 if (str_starts_with($uri, '/webGui/')) { header('Content-Type: text/css'); return true; } // empty stub
 
 // --- plugin files ----------------------------------------------------------
-if (preg_match('#^/plugins/fanctrlplus/(.+)$#', $uri, $m)) {
+if (preg_match('#^/plugins/fanctrlplusplus/(.+)$#', $uri, $m)) {
   $path = realpath("$repo/{$m[1]}");
   if ($path && str_starts_with($path, $repo) && serve_file($path)) return true;
   http_response_code(404); return true;
@@ -62,8 +62,8 @@ if ($uri === '/update.php') {
 
 // --- render a .page file ----------------------------------------------------
 $pages = [
-  '/'                      => "$repo/fanctrlplus.page",
-  '/Settings/fanctrlplus'  => "$repo/fanctrlplus.page",
+  '/'                   => "$repo/fanctrlplusplus.page",
+  '/Settings/fanctrlplusplus'  => "$repo/fanctrlplusplus.page",
 ];
 if (isset($pages[$uri])) {
   $page = file_get_contents($pages[$uri]);
@@ -76,7 +76,7 @@ if (isset($pages[$uri])) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FanCtrl Plus — dev harness</title>
+<title>FanCtrl PlusPlus — dev harness</title>
 <link rel="stylesheet" href="/webGui/styles/font-awesome.min.css">
 <link rel="stylesheet" href="/webGui/styles/default-base.css">
 <link rel="stylesheet" href="/webGui/styles/default-dynamix.css">
@@ -103,7 +103,7 @@ if (isset($pages[$uri])) {
 </head>
 <body>
 <div id="main">
-<div class="title"><span class="left">FanCtrl Plus</span></div>
+<div class="title"><span class="left">FanCtrl PlusPlus</span></div>
 <?php
   chdir($repo);
   eval('?>' . $page);

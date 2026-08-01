@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Plugin>
+  <PluginURL>https://raw.githubusercontent.com/willdollman/fanctrl/main/unraid/fanctrlplusplus.plg</PluginURL>
+  <PluginAuthor>willdollman</PluginAuthor>
+  <Category>Tools:System</Category>
+  <Name>FanCtrl PlusPlus</Name>
+  <Description>Automatic PWM fan control based on disk, NVMe, Unassigned Devices, and optional CPU temperatures.</Description>
+  <Overview>Configure independent PWM fans, temperature sources, thresholds, quiet mode, and dashboard monitoring.</Overview>
+  <MinVer>6.9.0</MinVer>
+  <Project>https://github.com/willdollman/fanctrl</Project>
+  <Support>https://github.com/willdollman/fanctrl/issues</Support>
+  <Icon>https://raw.githubusercontent.com/willdollman/fanctrl/main/images/fanctrlplus.png</Icon>
+</Plugin>

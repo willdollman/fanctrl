@@ -1,9 +1,9 @@
 <?php
-// FanCtrl Plus v2 save handler: saves ONE fan per request.
+// FanCtrl PlusPlus save handler: saves ONE fan per request.
 // All validation happens before anything is written; the cfg is written
 // atomically (tmp + rename); other fans' cfg files are never touched.
 
-$plugin  = 'fanctrlplus';
+$plugin  = 'fanctrlplusplus';
 $docroot = $docroot ?? ($_SERVER['DOCUMENT_ROOT'] ?: '/usr/local/emhttp');
 $cfgpath = "/boot/config/plugins/$plugin";
 
@@ -20,7 +20,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') fail('POST required');
 
 // ---------- read + validate everything ------------------------------------
 $file = basename(trim($_POST['file'] ?? ''));
-if ($file === '' || !preg_match('/^fanctrlplus_[\w.-]+\.cfg$/', $file)) fail('Bad file name');
+if ($file === '' || !preg_match('/^fanctrlplusplus_[\w.-]+\.cfg$/', $file)) fail('Bad file name');
 
 $custom = trim($_POST['custom'] ?? '');
 if (!preg_match('/^[A-Za-z0-9_]+$/', $custom)) {
@@ -174,7 +174,7 @@ if ($new_file !== $file) {
 }
 
 // restart the control daemon so changes take effect
-$rc = '/etc/rc.d/rc.fanctrlplus';
+$rc = '/etc/rc.d/rc.fanctrlplusplus';
 if (is_executable($rc)) {
   exec("nohup $rc restart >/dev/null 2>&1 &");
 }

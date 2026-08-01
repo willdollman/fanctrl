@@ -1,7 +1,7 @@
 <?php
 class OrderManager {
-  private static string $cfg_dir  = "/boot/config/plugins/fanctrlplus";
-  private static string $order_file = "/boot/config/plugins/fanctrlplus/order.cfg";
+  private static string $cfg_dir  = "/boot/config/plugins/fanctrlplusplus";
+  private static string $order_file = "/boot/config/plugins/fanctrlplusplus/order.cfg";
 
   public static function readOrder(): array {
     $left = [];
@@ -50,7 +50,7 @@ class OrderManager {
   }
 
   public static function replaceFileName($old_file, $new_file) {
-        $cfg_dir = "/boot/config/plugins/fanctrlplus"; // 路径可按你实际定义
+        $cfg_dir = "/boot/config/plugins/fanctrlplusplus"; // 路径可按你实际定义
         $order_file = "$cfg_dir/order.cfg";
 
         if (!file_exists($order_file)) return;
