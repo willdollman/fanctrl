@@ -1,6 +1,7 @@
 Menu="Utilities"
 Title="FanCtrl PlusPlus"
 Icon="fanctrlplus.png"
+---
 <?php
 $plugin  = "fanctrlplusplus";
 $docroot = $docroot ?? ($_SERVER['DOCUMENT_ROOT'] ?: '/usr/local/emhttp');

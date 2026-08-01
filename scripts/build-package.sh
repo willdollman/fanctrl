@@ -11,6 +11,10 @@ trap 'rm -rf "$stage"' EXIT
 dest="$stage/usr/local/emhttp/plugins/fanctrlplusplus"
 mkdir -p "$dest" "$stage/install" "$out"
 
+for page in fanctrlplusplus.page FanctrlPlusPlus.Dashboard.page FcpAirflow.Dashboard.page; do
+  grep -qx -- '---' "$root/$page" || { echo "$page is missing its metadata separator" >&2; exit 1; }
+done
+
 for path in css fonts icons images include js FanctrlPlusPlusDashboard.php FanctrlPlusPlus.Dashboard.page FcpAirflow.Dashboard.page fanctrlplusplus.page; do
   cp -a "$root/$path" "$dest/"
 done

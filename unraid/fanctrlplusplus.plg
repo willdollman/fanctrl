@@ -12,7 +12,10 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" min="6.9.0">
 <ICON>/usr/local/emhttp/plugins/fanctrlplusplus/images/fanctrlplus.png</ICON>
 <CHANGES>
-###2.0.0
+###0.0.3
+- Fixed the FanCtrl PlusPlus page not appearing under Settings.
+
+###0.0.2
 - Initial public FanCtrl PlusPlus release.
 - Added one-hour transient temperature, RPM, and PWM history with CSV export.
 - Added safe 10–100% manual PWM setup tests with explicit stop and a 10-minute fail-safe.
